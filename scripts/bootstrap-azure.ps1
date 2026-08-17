@@ -30,12 +30,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Azure resource group creation failed.' }
 
 $repositoryParts = $Repository.Split('/', 2)
 if ($repositoryParts.Count -ne 2) { throw 'Repository must use owner/name format.' }
+$githubOwnerId = gh api "users/$($repositoryParts[0])" --jq .id
+if ($LASTEXITCODE -ne 0 -or -not $githubOwnerId) { throw 'Could not resolve the stable GitHub owner ID.' }
+$githubRepositoryId = gh api "repos/$Repository" --jq .id
+if ($LASTEXITCODE -ne 0 -or -not $githubRepositoryId) { throw 'Could not resolve the stable GitHub repository ID.' }
 
 Write-Host 'Deploying the free-tier App Service and GitHub OIDC identity...'
 $deploymentJson = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file (Join-Path $PSScriptRoot '..\infra\main.bicep') `
-    --parameters githubOwner=$($repositoryParts[0]) githubRepository=$($repositoryParts[1]) `
+    --parameters githubOwner=$($repositoryParts[0]) githubOwnerId=$githubOwnerId githubRepository=$($repositoryParts[1]) githubRepositoryId=$githubRepositoryId `
     --query properties.outputs `
     --output json `
     --only-show-errors

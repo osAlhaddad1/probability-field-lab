@@ -5,7 +5,7 @@ The project deploys as an executable Java 21 JAR to Azure App Service. The Bicep
 - a Linux App Service plan using the free `F1` SKU;
 - a Java 21 web app with HTTPS-only traffic;
 - persistent experiment storage under `/home/data/probability-field-lab`;
-- a user-assigned Azure identity with a GitHub OIDC credential restricted to this repository's `main` branch;
+- a user-assigned Azure identity with a GitHub OIDC credential restricted to this repository's stable owner/repository IDs and `main` branch;
 - a role assignment scoped to the web app.
 
 No Azure client secret or publish profile is stored in GitHub.

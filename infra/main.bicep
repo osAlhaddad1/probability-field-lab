@@ -4,8 +4,14 @@ param location string = resourceGroup().location
 @description('GitHub account that owns the deployment repository.')
 param githubOwner string = 'osAlhaddad1'
 
+@description('Stable numeric GitHub account ID used in the repository OIDC subject.')
+param githubOwnerId string = '183378789'
+
 @description('GitHub repository trusted to deploy through OpenID Connect.')
 param githubRepository string = 'probability-field-lab'
+
+@description('Stable numeric GitHub repository ID used in the repository OIDC subject.')
+param githubRepositoryId string = '1337600114'
 
 @description('Git branch trusted to deploy through OpenID Connect.')
 param githubBranch string = 'main'
@@ -81,7 +87,7 @@ resource githubMainCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/
       'api://AzureADTokenExchange'
     ]
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubOwner}/${githubRepository}:ref:refs/heads/${githubBranch}'
+    subject: 'repo:${githubOwner}@${githubOwnerId}/${githubRepository}@${githubRepositoryId}:ref:refs/heads/${githubBranch}'
   }
 }
 
