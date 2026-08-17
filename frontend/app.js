@@ -9,10 +9,16 @@ const totalGamesOutput = $('#total-games');
 const workloadWarning = $('#workload-warning');
 const runButton = $('#run-button');
 const resultsSection = $('#results');
+const sweepResultsSection = $('#sweep-results');
+const fixedRatePanel = $('#fixed-rate-panel');
+const sweepRatePanel = $('#sweep-rate-panel');
 const matrix = $('#matrix');
 const tooltip = $('#tooltip');
 const chartTooltip = $('#chart-tooltip');
 let currentRun = null;
+let currentSweep = null;
+let experimentMode = 'fixed';
+const sweepState = { selectedProbability: 25, confidence: .9 };
 const MAX_TOTAL_GAMES = 10000000;
 let matrixCell = 7;
 const chartModels = {};
@@ -62,8 +68,11 @@ function updateWorkload() {
   const games = integerValue(gameCountInput, 300);
   const gameCost = financialValue(gameCostInput, 1);
   const winReward = financialValue(winRewardInput, 100);
-  const total = agents * games;
+  const multiplier = experimentMode === 'sweep' ? 99 : 1;
+  const total = agents * games * multiplier;
   totalGamesOutput.textContent = Number.isFinite(total) ? total.toLocaleString() : '—';
+  $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 99 FIELDS' : 'TOTAL GAMES';
+  runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 1—99% SWEEP' : 'RUN EXPERIMENT';
   const invalidEconomics = gameCost < 0 || gameCost > 1000000000 || winReward < 0 || winReward > 1000000000;
   const invalid = agents < 1 || agents > 10000 || games < 1 || games > 10000 || total > MAX_TOTAL_GAMES || invalidEconomics;
   workloadWarning.classList.toggle('invalid', invalid);
@@ -71,7 +80,9 @@ function updateWorkload() {
     ? `${total.toLocaleString()} EXCEEDS THE 10,000,000 LIMIT`
     : invalidEconomics
       ? 'COST AND REWARD MUST BE BETWEEN 0 AND 1,000,000,000'
-      : 'MAXIMUM 10,000,000 TOTAL GAMES';
+      : experimentMode === 'sweep'
+        ? '99 PROBABILITIES · MAXIMUM 10,000,000 TOTAL GAMES'
+        : 'MAXIMUM 10,000,000 TOTAL GAMES';
   runButton.disabled = invalid;
   return { agents, games, gameCost, winReward, total, invalid };
 }
@@ -82,17 +93,31 @@ gameCostInput.addEventListener('input', updateWorkload);
 winRewardInput.addEventListener('input', updateWorkload);
 updateWorkload();
 
+function setExperimentMode(mode) {
+  experimentMode = mode === 'sweep' ? 'sweep' : 'fixed';
+  document.querySelectorAll('[data-mode]').forEach(button => {
+    const active = button.dataset.mode === experimentMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  fixedRatePanel.classList.toggle('hidden', experimentMode === 'sweep');
+  sweepRatePanel.classList.toggle('hidden', experimentMode !== 'sweep');
+  updateWorkload();
+}
+
+document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => setExperimentMode(button.dataset.mode)));
+
 runButton.addEventListener('click', async () => {
   const workload = updateWorkload();
   if (workload.invalid) return;
   runButton.disabled = true;
   runButton.classList.add('loading');
   try {
-    const response = await fetch('/api/runs', {
+    const response = await fetch(experimentMode === 'sweep' ? '/api/sweeps' : '/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        successRate: clampRate(rateNumber.value) / 100,
+        ...(experimentMode === 'fixed' ? { successRate: clampRate(rateNumber.value) / 100 } : {}),
         agentCount: workload.agents,
         gamesPerAgent: workload.games,
         gameCost: workload.gameCost,
@@ -100,9 +125,14 @@ runButton.addEventListener('click', async () => {
       })
     });
     if (!response.ok) throw new Error((await response.json()).error || 'Experiment failed');
-    showRun(await response.json());
-    await loadHistory();
-    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const payload = await response.json();
+    if (experimentMode === 'sweep') {
+      showSweep(payload);
+      sweepResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      showRun(payload);
+      resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   } catch (error) {
     alert(`Could not run experiment: ${error.message}`);
   } finally {
@@ -113,6 +143,7 @@ runButton.addEventListener('click', async () => {
 
 function showRun(run) {
   currentRun = run;
+  currentSweep = null;
   pinnedChart = null;
   chartTooltip.classList.remove('visible');
   agentCountInput.value = run.agentCount;
@@ -123,6 +154,7 @@ function showRun(run) {
   winRewardInput.value = run.winReward;
   updateWorkload();
   resultsSection.classList.remove('hidden');
+  sweepResultsSection.classList.add('hidden');
   const successes = run.totalSuccesses;
   const failures = run.totalGames - successes;
   const actualPercent = successes / run.totalGames * 100;
@@ -875,6 +907,265 @@ function drawSensitivity(run) {
   };
 }
 
+function attemptBoundary(probability, confidence) {
+  if (probability >= 1) return 1;
+  if (probability <= 0) return Infinity;
+  return Math.max(1, Math.ceil(Math.log(1 - confidence) / Math.log(1 - probability)));
+}
+
+function drawSweepLine(id, series, options = {}) {
+  const chart = getChartContext(id, options.dark);
+  const { ctx, width, pad, ink } = chart;
+  const values = series.flatMap(item => item.values).filter(Number.isFinite);
+  let minimum = options.minimum ?? Math.min(0, ...values);
+  let maximum = options.maximum ?? Math.max(1, ...values);
+  if (maximum <= minimum) maximum = minimum + 1;
+  const ticks = [0, .5, 1].map(ratio => ({ value: minimum + (maximum - minimum) * ratio, ratio }));
+  const xLabels = options.xLabels ?? ['1%', '99%'];
+  const { plotWidth, plotHeight } = chartFrame(chart, ticks, options.formatter ?? (value => value.toFixed(1)), xLabels);
+  const count = Math.max(1, series[0]?.values.length ?? 1);
+  const x = index => pad.left + index / Math.max(1, count - 1) * plotWidth;
+  const y = value => pad.top + plotHeight * (1 - (value - minimum) / (maximum - minimum));
+
+  if (minimum < 0 && maximum > 0) {
+    ctx.strokeStyle = options.dark ? '#65736a' : '#7e8a81';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.left, y(0)); ctx.lineTo(width - pad.right, y(0)); ctx.stroke();
+  }
+
+  series.forEach(item => {
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.width ?? 2;
+    ctx.setLineDash(item.dash ?? []);
+    ctx.globalAlpha = item.alpha ?? 1;
+    ctx.beginPath();
+    item.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) return;
+      if (index === 0) ctx.moveTo(x(index), y(value)); else ctx.lineTo(x(index), y(value));
+    });
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+
+  const markerIndex = Math.max(0, Math.min(count - 1, options.markerIndex ?? sweepState.selectedProbability - 1));
+  ctx.strokeStyle = options.markerColor ?? (options.dark ? '#fbfbf7' : ink);
+  ctx.globalAlpha = .42;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath(); ctx.moveTo(x(markerIndex), pad.top); ctx.lineTo(x(markerIndex), pad.top + plotHeight); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  return { chart, x, y, minimum, maximum, plotWidth, plotHeight };
+}
+
+function showSweep(sweep) {
+  currentSweep = sweep;
+  currentRun = null;
+  pinnedChart = null;
+  chartTooltip.classList.remove('visible');
+  agentCountInput.value = sweep.agentCount;
+  gameCountInput.value = sweep.gamesPerAgent;
+  gameCostInput.value = sweep.gameCost;
+  winRewardInput.value = sweep.winReward;
+  resultsSection.classList.add('hidden');
+  sweepResultsSection.classList.remove('hidden');
+  $('#sweep-total').textContent = sweep.totalGames.toLocaleString();
+  $('#sweep-duration').textContent = `${sweep.durationMs} ms`;
+  const breakEven = sweep.winReward > 0 ? sweep.gameCost / sweep.winReward * 100 : sweep.gameCost === 0 ? 0 : Infinity;
+  $('#sweep-breakeven').textContent = Number.isFinite(breakEven) ? `${breakEven.toFixed(3)}%` : 'NO FINITE RATE';
+  updateSweepDecision();
+}
+
+function updateSweepDecision() {
+  if (!currentSweep) return;
+  const probabilityPercent = sweepState.selectedProbability;
+  const probability = probabilityPercent / 100;
+  const boundary = attemptBoundary(probability, sweepState.confidence);
+  const withinLimit = boundary <= currentSweep.gamesPerAgent;
+  const chanceAtLimit = (1 - Math.pow(1 - probability, currentSweep.gamesPerAgent)) * 100;
+  const confidenceReached = (1 - Math.pow(1 - probability, Math.min(boundary, currentSweep.gamesPerAgent))) * 100;
+  const maximumSpend = boundary * currentSweep.gameCost;
+  const marginalValue = probability * currentSweep.winReward - currentSweep.gameCost;
+  const slider = $('#sweep-probability');
+  slider.value = probabilityPercent;
+  slider.style.setProperty('--progress', `${probabilityPercent}%`);
+  $('#selected-probability').textContent = `${probabilityPercent}%`;
+  $('#decision-attempt').textContent = withinLimit ? `${boundary} ATTEMPT${boundary === 1 ? '' : 'S'}` : `>${currentSweep.gamesPerAgent} ATTEMPTS`;
+  $('#decision-confidence-copy').textContent = withinLimit
+    ? `${confidenceReached.toFixed(2)}% CHANCE OF ≥1 WIN`
+    : `TARGET NEEDS ${boundary}; CURRENT LIMIT REACHES ${chanceAtLimit.toFixed(2)}%`;
+  $('#decision-spend').textContent = formatFinancial(maximumSpend);
+  const marginalOutput = $('#decision-marginal');
+  marginalOutput.textContent = `${marginalValue >= 0 ? '+' : ''}${formatFinancial(marginalValue)}`;
+  marginalOutput.className = marginalValue >= 0 ? 'positive' : 'negative';
+  const valueSentence = marginalValue >= 0
+    ? `Each additional independent try has positive expected value of ${formatFinancial(marginalValue)}.`
+    : `Each additional independent try has negative expected value of ${formatFinancial(marginalValue)}.`;
+  $('#decision-summary').textContent = `${probabilityPercent}% remains ${probabilityPercent}% after every miss. ${withinLimit ? `Attempt ${boundary} reaches your ${(sweepState.confidence * 100).toFixed(0)}% confidence target.` : `The current ${currentSweep.gamesPerAgent}-attempt limit cannot reach your ${(sweepState.confidence * 100).toFixed(0)}% target.`} ${valueSentence}`;
+  document.querySelectorAll('[data-confidence]').forEach(button => {
+    const active = Number(button.dataset.confidence) === sweepState.confidence;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  drawSweepAtlas(currentSweep);
+}
+
+function drawSweepAtlas(sweep) {
+  const points = sweep.points;
+  const selectedIndex = sweepState.selectedProbability - 1;
+  const selected = points[selectedIndex];
+  const fieldGames = sweep.agentCount * sweep.gamesPerAgent;
+  const targets = points.map(point => point.probabilityPercent);
+  const actualRates = points.map(point => point.actualRate * 100);
+  const calibrationErrors = actualRates.map((value, index) => Math.abs(value - targets[index]));
+  drawSweepLine('sweep-calibration-chart', [
+    { values: targets, color: '#7f8a82', dash: [5, 5], width: 1.2 },
+    { values: actualRates, color: '#16a05d', width: 2.3 }
+  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%` });
+  $('#sweep-calibration-insight').textContent = `MEAN ERROR ${(calibrationErrors.reduce((a, b) => a + b, 0) / 99).toFixed(3)} PTS`;
+  chartModels['sweep-calibration-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% TARGET ODDS</strong><br>${actualRates[index].toFixed(3)}% observed rate<br>${points[index].totalSuccesses.toLocaleString()} wins / ${fieldGames.toLocaleString()} games<br>${calibrationErrors[index].toFixed(3)} point calibration gap`
+  };
+
+  const outcomeChart = getChartContext('sweep-outcomes-chart', true);
+  const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['1%', '99%']);
+  const outcomeSlot = outcomeFrame.plotWidth / 99;
+  points.forEach((point, index) => {
+    const successHeight = point.actualRate * outcomeFrame.plotHeight;
+    outcomeChart.ctx.fillStyle = index === selectedIndex ? '#fbfbf7' : '#d6f25c';
+    outcomeChart.ctx.globalAlpha = index === selectedIndex ? 1 : .78;
+    outcomeChart.ctx.fillRect(outcomeChart.pad.left + index * outcomeSlot, outcomeChart.pad.top + outcomeFrame.plotHeight - successHeight, Math.max(1, outcomeSlot), successHeight);
+    outcomeChart.ctx.fillStyle = '#435249';
+    outcomeChart.ctx.fillRect(outcomeChart.pad.left + index * outcomeSlot, outcomeChart.pad.top, Math.max(1, outcomeSlot), outcomeFrame.plotHeight - successHeight);
+  });
+  outcomeChart.ctx.globalAlpha = 1;
+  $('#sweep-outcomes-insight').textContent = `${selected.probabilityPercent}% → ${selected.totalSuccesses.toLocaleString()} W / ${selected.totalFailures.toLocaleString()} L`;
+  chartModels['sweep-outcomes-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].totalSuccesses.toLocaleString()} wins · ${points[index].totalFailures.toLocaleString()} losses<br>${(points[index].actualRate * 100).toFixed(3)}% / ${(100 - points[index].actualRate * 100).toFixed(3)}% split`
+  };
+
+  const expectedNet = points.map(point => fieldGames * (point.probability * sweep.winReward - sweep.gameCost));
+  const observedNet = points.map(point => point.observedNet);
+  drawSweepLine('sweep-profit-chart', [
+    { values: expectedNet, color: '#7f8a82', dash: [5, 5], width: 1.2 },
+    { values: observedNet, color: '#16a05d', width: 2.2 }
+  ], { formatter: value => formatFinancial(value, 1) });
+  const breakEven = sweep.winReward > 0 ? sweep.gameCost / sweep.winReward * 100 : Infinity;
+  $('#sweep-profit-insight').textContent = Number.isFinite(breakEven) ? `BREAK-EVEN ${breakEven.toFixed(3)}%` : 'NO FINITE BREAK-EVEN';
+  chartModels['sweep-profit-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>Observed net: ${observedNet[index] >= 0 ? '+' : ''}${formatFinancial(observedNet[index])}<br>Expected net: ${expectedNet[index] >= 0 ? '+' : ''}${formatFinancial(expectedNet[index])}<br>${points[index].probabilityPercent >= breakEven ? 'Above' : 'Below'} break-even`
+  };
+
+  const observedCoverage = points.map(point => point.agentsWithSuccess / sweep.agentCount * 100);
+  const expectedCoverage = points.map(point => (1 - Math.pow(1 - point.probability, sweep.gamesPerAgent)) * 100);
+  drawSweepLine('sweep-coverage-chart', [
+    { values: expectedCoverage, color: '#7f8a82', dash: [5, 5], width: 1.2 },
+    { values: observedCoverage, color: '#16a05d', width: 2.2 }
+  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%` });
+  $('#sweep-coverage-insight').textContent = `${selected.probabilityPercent}% → ${observedCoverage[selectedIndex].toFixed(2)}% COVERED`;
+  chartModels['sweep-coverage-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].agentsWithSuccess.toLocaleString()} / ${sweep.agentCount.toLocaleString()} agents won at least once<br>${observedCoverage[index].toFixed(2)}% observed · ${expectedCoverage[index].toFixed(2)}% expected`
+  };
+
+  const boundaries = points.map(point => attemptBoundary(point.probability, sweepState.confidence));
+  const maxBoundary = Math.max(sweep.gamesPerAgent, ...boundaries);
+  drawSweepLine('sweep-stop-chart', [{ values: boundaries, color: '#14251d', width: 2.3 }], {
+    minimum: 0, maximum: maxBoundary, formatter: value => `${Math.round(value)}×`, markerColor: '#14251d'
+  });
+  $('#sweep-stop-insight').textContent = `${(sweepState.confidence * 100).toFixed(0)}% TARGET · ${selected.probabilityPercent}% NEEDS ${boundaries[selectedIndex]}`;
+  chartModels['sweep-stop-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${boundaries[index]} attempts for ≥${(sweepState.confidence * 100).toFixed(0)}% chance of one win<br>${boundaries[index] <= sweep.gamesPerAgent ? 'Inside' : 'Beyond'} the ${sweep.gamesPerAgent}-game limit<br>${points[index].probabilityPercent}% chance remains on every next try`
+  };
+
+  const confidenceCosts = boundaries.map(boundary => boundary * sweep.gameCost);
+  drawSweepLine('sweep-cost-chart', [{ values: confidenceCosts, color: '#16a05d', width: 2.3 }], {
+    minimum: 0, formatter: value => formatFinancial(value, 1)
+  });
+  $('#sweep-cost-insight').textContent = `${selected.probabilityPercent}% → ${formatFinancial(confidenceCosts[selectedIndex])} MAX SPEND`;
+  chartModels['sweep-cost-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${formatFinancial(confidenceCosts[index])} maximum spend to the confidence boundary<br>${boundaries[index]} attempts × ${formatFinancial(sweep.gameCost)} per attempt`
+  };
+
+  const waitMedian = points.map(point => point.medianFirstSuccess);
+  const waitP90 = points.map(point => point.p90FirstSuccess);
+  drawSweepLine('sweep-wait-chart', [
+    { values: waitP90, color: '#65736a', dash: [5, 5], width: 1.4 },
+    { values: waitMedian, color: '#d6f25c', width: 2.3 }
+  ], { dark: true, minimum: 0, maximum: sweep.gamesPerAgent + 1, formatter: value => `${Math.round(value)}G` });
+  $('#sweep-wait-insight').textContent = `${selected.probabilityPercent}% → P50 ${waitMedian[selectedIndex]} / P90 ${waitP90[selectedIndex]}`;
+  chartModels['sweep-wait-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>Median first win: ${waitMedian[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitMedian[index]}`}<br>90th percentile: ${waitP90[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitP90[index]}`}<br>Average among winners: ${points[index].averageFirstSuccess.toFixed(2)} games`
+  };
+
+  const observedZero = points.map(point => point.agentsWithoutSuccess / sweep.agentCount * 100);
+  const expectedZero = points.map(point => Math.pow(1 - point.probability, sweep.gamesPerAgent) * 100);
+  drawSweepLine('sweep-zero-chart', [
+    { values: expectedZero, color: '#7f8a82', dash: [5, 5], width: 1.2 },
+    { values: observedZero, color: '#a74d32', width: 2.2 }
+  ], { minimum: 0, maximum: Math.max(1, expectedZero[0], observedZero[0]), formatter: value => `${value.toFixed(1)}%` });
+  $('#sweep-zero-insight').textContent = `${selected.probabilityPercent}% → ${observedZero[selectedIndex].toFixed(2)}% NEVER WON`;
+  chartModels['sweep-zero-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].agentsWithoutSuccess} agents never won<br>${observedZero[index].toFixed(3)}% observed zero-win risk<br>${expectedZero[index].toFixed(3)}% theoretical risk`
+  };
+
+  const observedVolatility = points.map(point => point.successStdDev);
+  const expectedVolatility = points.map(point => Math.sqrt(sweep.gamesPerAgent * point.probability * (1 - point.probability)));
+  drawSweepLine('sweep-volatility-chart', [
+    { values: expectedVolatility, color: '#7f8a82', dash: [5, 5], width: 1.2 },
+    { values: observedVolatility, color: '#16a05d', width: 2.2 }
+  ], { minimum: 0, formatter: value => value.toFixed(1) });
+  $('#sweep-volatility-insight').textContent = `PEAK SPREAD ${Math.max(...observedVolatility).toFixed(2)} WINS`;
+  chartModels['sweep-volatility-chart'] = {
+    count: 99,
+    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${observedVolatility[index].toFixed(3)} observed win-count deviation<br>${expectedVolatility[index].toFixed(3)} theoretical deviation<br>${points[index].averageSuccessesPerAgent.toFixed(2)} average wins per agent`
+  };
+
+  drawSweepDecisionCurve(sweep, selected);
+}
+
+function drawSweepDecisionCurve(sweep, point) {
+  const probability = point.probability;
+  const observedCoverage = [];
+  let cumulativeAgents = 0;
+  point.firstSuccessCounts.forEach(count => {
+    cumulativeAgents += count;
+    observedCoverage.push(cumulativeAgents / sweep.agentCount * 100);
+  });
+  const expectedCoverage = Array.from({ length: sweep.gamesPerAgent }, (_, index) => (1 - Math.pow(1 - probability, index + 1)) * 100);
+  const missRisk = expectedCoverage.map(value => 100 - value);
+  const boundary = attemptBoundary(probability, sweepState.confidence);
+  const markerIndex = Math.min(sweep.gamesPerAgent - 1, boundary - 1);
+  drawSweepLine('sweep-decision-chart', [
+    { values: missRisk, color: '#a74d32', dash: [5, 5], width: 1.3 },
+    { values: expectedCoverage, color: '#7f8a82', dash: [3, 4], width: 1.3 },
+    { values: observedCoverage, color: '#16a05d', width: 2.4 }
+  ], {
+    minimum: 0,
+    maximum: 100,
+    formatter: value => `${value.toFixed(0)}%`,
+    xLabels: ['ATTEMPT 1', `ATTEMPT ${sweep.gamesPerAgent}`],
+    markerIndex
+  });
+  $('#sweep-decision-insight').textContent = boundary <= sweep.gamesPerAgent
+    ? `${point.probabilityPercent}% · MOVE-ON BOUNDARY ${boundary}`
+    : `${point.probabilityPercent}% · TARGET BEYOND ${sweep.gamesPerAgent}`;
+  chartModels['sweep-decision-chart'] = {
+    count: sweep.gamesPerAgent,
+    describe: index => {
+      const attempt = index + 1;
+      return `<strong>ATTEMPT ${attempt} · ${point.probabilityPercent}% ODDS</strong><br>${observedCoverage[index].toFixed(2)}% observed agents have won<br>${expectedCoverage[index].toFixed(2)}% expected chance of ≥1 win<br>${missRisk[index].toFixed(2)}% chance still waiting<br>${formatFinancial(attempt * sweep.gameCost)} maximum spend`;
+    }
+  };
+}
+
 function chartIndexAt(canvas, event, count) {
   const rect = canvas.getBoundingClientRect();
   const plotLeft = 43;
@@ -909,6 +1200,10 @@ document.querySelectorAll('.data-chart:not(#first-success-chart)').forEach(canva
     if (!model) return;
     const index = chartIndexAt(canvas, event, model.count);
     if (index < 0) return;
+    if (currentSweep && canvas.classList.contains('sweep-selectable')) {
+      sweepState.selectedProbability = index + 1;
+      updateSweepDecision();
+    }
     const samePoint = pinnedChart?.id === canvas.id && pinnedChart.index === index;
     pinnedChart = samePoint ? null : { id: canvas.id, index };
     if (samePoint) chartTooltip.classList.remove('visible');
@@ -918,6 +1213,20 @@ document.querySelectorAll('.data-chart:not(#first-success-chart)').forEach(canva
     if (!pinnedChart || pinnedChart.id !== canvas.id) chartTooltip.classList.remove('visible');
   });
 });
+
+$('#sweep-probability').addEventListener('input', event => {
+  sweepState.selectedProbability = Number(event.target.value);
+  pinnedChart = null;
+  chartTooltip.classList.remove('visible');
+  updateSweepDecision();
+});
+
+document.querySelectorAll('[data-confidence]').forEach(button => button.addEventListener('click', () => {
+  sweepState.confidence = Number(button.dataset.confidence);
+  pinnedChart = null;
+  chartTooltip.classList.remove('visible');
+  updateSweepDecision();
+}));
 
 function waitingIndexAt(event) {
   if (!waitingData) return -1;
@@ -1034,72 +1343,13 @@ document.addEventListener('keydown', event => {
 
 let chartResizeTimer;
 window.addEventListener('resize', () => {
-  if (!currentRun) return;
+  if (!currentRun && !currentSweep) return;
   clearTimeout(chartResizeTimer);
-  chartResizeTimer = setTimeout(() => drawAnalytics(currentRun), 120);
+  chartResizeTimer = setTimeout(() => {
+    if (currentRun) drawAnalytics(currentRun);
+    if (currentSweep) drawSweepAtlas(currentSweep);
+  }, 120);
 });
-
-async function loadHistory() {
-  const list = $('#history-list');
-  try {
-    const response = await fetch('/api/runs');
-    if (!response.ok) throw new Error('Could not load archive');
-    const runs = await response.json();
-    if (!runs.length) {
-      list.innerHTML = '<p class="empty">No saved runs yet. Your first experiment will appear here.</p>';
-      return;
-    }
-    list.innerHTML = runs.map(run => {
-      const actual = run.totalSuccesses / run.totalGames * 100;
-      const label = `${new Date(run.createdAt).toLocaleString()} · ${run.agentCount}×${run.gamesPerAgent}`;
-      return `<div class="history-row">
-        <button class="history-open" data-id="${run.id}" aria-label="Open run ${label}">
-          <strong>${new Date(run.createdAt).toLocaleString()}</strong>
-          <span>${run.agentCount}×${run.gamesPerAgent} · ${(run.successRate * 100).toFixed(2)}% TARGET · C${formatFinancial(run.gameCost ?? 1)} / R${formatFinancial(run.winReward ?? 100)}</span>
-          <span>${run.totalSuccesses.toLocaleString()} SUCCESSES</span>
-          <span>${actual.toFixed(3)}% ACTUAL</span>
-          <i>OPEN →</i>
-        </button>
-        <button class="history-delete" data-id="${run.id}" data-label="${label}" aria-label="Delete run ${label}">DELETE</button>
-      </div>`;
-    }).join('');
-    list.querySelectorAll('.history-open').forEach(button => button.addEventListener('click', () => openRun(button.dataset.id)));
-    list.querySelectorAll('.history-delete').forEach(button => button.addEventListener('click', () => deleteRun(button)));
-  } catch (error) {
-    list.innerHTML = `<p class="empty">${error.message}</p>`;
-  }
-}
-
-async function openRun(id) {
-  const response = await fetch(`/api/runs/${encodeURIComponent(id)}`);
-  if (!response.ok) return alert('That saved run could not be opened.');
-  showRun(await response.json());
-  resultsSection.scrollIntoView({ behavior: 'smooth' });
-}
-
-async function deleteRun(button) {
-  const id = button.dataset.id;
-  const label = button.dataset.label;
-  const confirmed = window.confirm(`Delete saved run ${label}?\n\nIt will be removed from the archive and moved to the recoverable data/trash folder.`);
-  if (!confirmed) return;
-  button.disabled = true;
-  button.textContent = 'MOVING…';
-  try {
-    const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error((await response.json()).error || 'Delete failed');
-    if (currentRun?.id === id) {
-      currentRun = null;
-      resultsSection.classList.add('hidden');
-    }
-    await loadHistory();
-  } catch (error) {
-    alert(`Could not delete run: ${error.message}`);
-    button.disabled = false;
-    button.textContent = 'DELETE';
-  }
-}
-
-$('#refresh-history').addEventListener('click', loadHistory);
 $('#export-button').addEventListener('click', () => {
   if (!currentRun) return;
   const header = ['agent', 'successes', 'net_profit', ...Array.from({ length: currentRun.gamesPerAgent }, (_, i) => `game_${i + 1}`)];
@@ -1111,5 +1361,3 @@ $('#export-button').addEventListener('click', () => {
   link.click();
   URL.revokeObjectURL(link.href);
 });
-
-loadHistory();

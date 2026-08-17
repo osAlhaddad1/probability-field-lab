@@ -21,29 +21,33 @@
   </header>
 
   <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">MONTE CARLO WORKBENCH / 01</p>
-        <h1>Make chance<br><em>visible.</em></h1>
-      </div>
-      <p class="intro">Choose how many independent agents to launch, how many probability games each one plays, and the odds of success. Every outcome is generated concurrently and preserved after each run.</p>
-    </section>
-
     <section class="control-deck" aria-labelledby="experiment-title">
       <div class="deck-heading">
         <span class="step">01</span>
-        <div><p class="eyebrow">EXPERIMENT INPUT</p><h2 id="experiment-title">Set the odds</h2></div>
+        <div><p class="eyebrow">EXPERIMENT INPUT</p><h2 id="experiment-title">Choose the question</h2></div>
       </div>
 
-      <div class="rate-control">
-        <label for="rate-number">Success probability</label>
-        <div class="rate-readout">
-          <input id="rate-number" type="number" min="0" max="100" step="0.1" value="1" aria-describedby="rate-help">
-          <span>%</span>
+      <div class="mode-stack">
+        <div class="mode-switch" role="group" aria-label="Experiment mode">
+          <button class="mode-option active" data-mode="fixed" aria-pressed="true"><span>KNOWN ODDS</span><strong>One probability</strong></button>
+          <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 1—99%</strong></button>
         </div>
-        <input id="rate-slider" type="range" min="0" max="100" step="0.1" value="1" aria-label="Success probability slider">
-        <div class="range-labels"><span>0 / IMPOSSIBLE</span><span>100 / CERTAIN</span></div>
-        <p id="rate-help">Applied independently to every game in the experiment.</p>
+
+        <div id="fixed-rate-panel" class="rate-control">
+          <label for="rate-number">Success probability</label>
+          <div class="rate-readout">
+            <input id="rate-number" type="number" min="0" max="100" step="0.1" value="1" aria-describedby="rate-help">
+            <span>%</span>
+          </div>
+          <input id="rate-slider" type="range" min="0" max="100" step="0.1" value="1" aria-label="Success probability slider">
+          <div class="range-labels"><span>0 / IMPOSSIBLE</span><span>100 / CERTAIN</span></div>
+          <p id="rate-help">Applied independently to every game in the experiment.</p>
+        </div>
+
+        <div id="sweep-rate-panel" class="sweep-primer hidden">
+          <span class="sweep-mark">99×</span>
+          <div><strong>No probability required.</strong><p>The engine repeats the complete agent field at every whole-number probability from 1% through 99%.</p></div>
+        </div>
       </div>
 
       <div class="run-spec">
@@ -51,7 +55,7 @@
         <label><span>GAMES / AGENT</span><input id="game-count" type="number" min="1" max="10000" step="1" value="300"></label>
         <label><span>COST / GAME</span><input id="game-cost" type="number" min="0" max="1000000000" step="0.01" value="1"></label>
         <label><span>REWARD / WIN</span><input id="win-reward" type="number" min="0" max="1000000000" step="0.01" value="100"></label>
-        <div><span>TOTAL GAMES</span><strong id="total-games">60,000</strong></div>
+        <div><span id="total-games-label">TOTAL GAMES</span><strong id="total-games">60,000</strong></div>
         <p id="workload-warning" class="workload-warning">MAXIMUM 10,000,000 TOTAL GAMES</p>
       </div>
 
@@ -203,20 +207,116 @@
             </article>
           </div>
         </section>
-        <div id="chart-tooltip" class="chart-tooltip" role="status"></div>
       </section>
     </section>
 
-    <section class="history" aria-labelledby="history-title">
-      <div class="section-head">
+    <section id="sweep-results" class="sweep-results hidden" aria-labelledby="sweep-title">
+      <div class="sweep-result-head">
         <div class="deck-heading">
-          <span class="step">03</span>
-          <div><p class="eyebrow">SAVED LOCALLY</p><h2 id="history-title">Run archive</h2></div>
+          <span class="step">02</span>
+          <div><p class="eyebrow">UNKNOWN-ODDS LAB</p><h2 id="sweep-title">The probability atlas</h2></div>
         </div>
-        <button id="refresh-history" class="ghost-button">REFRESH</button>
+        <p>One identical experiment, repeated at every probability from 1% to 99%. Use the decision lens to translate uncertainty into an attempt limit you can explain.</p>
       </div>
-      <div id="history-list" class="history-list"><p class="empty">No saved runs yet.</p></div>
+
+      <div class="sweep-stats" aria-live="polite">
+        <div><span>PROBABILITIES TESTED</span><strong>99</strong></div>
+        <div><span>TOTAL TRIALS</span><strong id="sweep-total">—</strong></div>
+        <div><span>BREAK-EVEN ODDS</span><strong id="sweep-breakeven">—</strong></div>
+        <div><span>COMPUTE TIME</span><strong id="sweep-duration">—</strong></div>
+      </div>
+
+      <section class="decision-console" aria-labelledby="decision-title">
+        <div class="decision-copy">
+          <p class="eyebrow">DECISION LENS</p>
+          <h3 id="decision-title">When should I move on?</h3>
+          <p id="decision-summary">Choose a probability and the confidence you want before treating a run of misses as your stopping boundary.</p>
+        </div>
+        <div class="decision-controls">
+          <label for="sweep-probability">PROBABILITY TO INSPECT <strong id="selected-probability">25%</strong></label>
+          <input id="sweep-probability" type="range" min="1" max="99" step="1" value="25" aria-label="Probability to inspect">
+          <div class="confidence-row">
+            <span>DESIRED CHANCE OF ≥1 WIN</span>
+            <div role="group" aria-label="Decision confidence">
+              <button data-confidence="0.5">50%</button>
+              <button data-confidence="0.75">75%</button>
+              <button class="active" data-confidence="0.9">90%</button>
+              <button data-confidence="0.95">95%</button>
+              <button data-confidence="0.99">99%</button>
+            </div>
+          </div>
+        </div>
+        <div class="decision-readout">
+          <span>MOVE-ON BOUNDARY</span><strong id="decision-attempt">—</strong><small id="decision-confidence-copy">—</small>
+          <div><span>MAXIMUM SPEND</span><b id="decision-spend">—</b></div>
+          <div><span>VALUE / NEXT TRY</span><b id="decision-marginal">—</b></div>
+        </div>
+      </section>
+
+      <div class="sweep-grid">
+        <article class="sweep-card sweep-wide">
+          <header><span>ATLAS / 01</span><div><h4>Calibration line</h4><p>Did the observed outcomes follow the probability the engine was given?</p></div></header>
+          <canvas id="sweep-calibration-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Observed success rate compared with each target probability"></canvas>
+          <footer>OBSERVED VS TARGET <strong id="sweep-calibration-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-dark">
+          <header><span>ATLAS / 02</span><div><h4>Wins against losses</h4><p>The full outcome composition at every tested probability.</p></div></header>
+          <canvas id="sweep-outcomes-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Wins and losses across probabilities"></canvas>
+          <footer>SUCCESS SHARE <strong id="sweep-outcomes-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>ATLAS / 03</span><div><h4>Profit frontier</h4><p>Observed and expected value reveal the odds where this game becomes financially rational.</p></div></header>
+          <canvas id="sweep-profit-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Observed and expected profit across probabilities"></canvas>
+          <footer>NET VALUE <strong id="sweep-profit-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>ATLAS / 04</span><div><h4>Agent coverage</h4><p>What share of agents achieved at least one win before the game limit?</p></div></header>
+          <canvas id="sweep-coverage-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Share of agents achieving at least one win"></canvas>
+          <footer>≥1 WIN <strong id="sweep-coverage-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-acid">
+          <header><span>ATLAS / 05</span><div><h4>Move-on boundary</h4><p>Attempts needed to reach your chosen chance of seeing at least one win.</p></div></header>
+          <canvas id="sweep-stop-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Recommended attempt boundary across probabilities"></canvas>
+          <footer>CONFIDENCE POLICY <strong id="sweep-stop-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>ATLAS / 06</span><div><h4>Cost to confidence</h4><p>The maximum spend required to reach that move-on boundary.</p></div></header>
+          <canvas id="sweep-cost-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Cost required to reach selected confidence across probabilities"></canvas>
+          <footer>ATTEMPT COST EXPOSURE <strong id="sweep-cost-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-dark">
+          <header><span>ATLAS / 07</span><div><h4>First-win waiting bands</h4><p>Median and 90th-percentile waits, including agents that never won within the limit.</p></div></header>
+          <canvas id="sweep-wait-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Median and ninetieth percentile first win waits"></canvas>
+          <footer>MEDIAN / P90 WAIT <strong id="sweep-wait-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>ATLAS / 08</span><div><h4>Zero-win risk</h4><p>The observed and theoretical chance of reaching the limit without a single success.</p></div></header>
+          <canvas id="sweep-zero-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Observed and expected chance of zero wins"></canvas>
+          <footer>NO-SUCCESS RISK <strong id="sweep-zero-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>ATLAS / 09</span><div><h4>Outcome volatility</h4><p>How widely the win count varies between agents at each probability.</p></div></header>
+          <canvas id="sweep-volatility-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Standard deviation of agent wins across probabilities"></canvas>
+          <footer>AGENT-TO-AGENT SPREAD <strong id="sweep-volatility-insight">—</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-wide decision-curve-card">
+          <header><span>ATLAS / 10</span><div><h4>Attempt decision curve</h4><p>For the selected probability: cumulative chance of a first win, remaining miss risk, and your chosen boundary.</p></div></header>
+          <canvas id="sweep-decision-chart" class="data-chart sweep-chart" role="img" aria-label="Cumulative first-win chance and miss risk by attempt"></canvas>
+          <footer>SELECTED PROBABILITY <strong id="sweep-decision-insight">—</strong></footer>
+        </article>
+      </div>
     </section>
+
+    <div id="chart-tooltip" class="chart-tooltip" role="status"></div>
   </main>
 
   <footer><span>PROBABILITY FIELD LAB</span><span>CONFIGURABLE SCALE / REPRODUCIBLE BY SEED</span></footer>

@@ -2,6 +2,11 @@
 
 A dependency-free Java + JavaScript probability experiment. Each run launches a configurable number of concurrent mini agents, and every agent plays a configurable number of independent probability games. The defaults are **200 agents × 300 games = 60,000 outcomes**. Each game can also have a configurable cost and each success a configurable reward.
 
+The dashboard has two modes:
+
+- **Known odds** runs one detailed field at a chosen success probability.
+- **Unknown odds** repeats the complete field 99 times at every probability from 1% through 99%, then builds a ten-graph decision atlas around calibration, profit, risk, waiting time, and a configurable move-on boundary.
+
 ## Run it
 
 The recommended development command starts both the Java API and JavaScript frontend:
@@ -16,7 +21,7 @@ You can also double-click `run.bat`. Both options compile the project with the i
 
 ## What is saved
 
-Each experiment is stored as a JSON file under `data/runs/`. It includes:
+Detailed experiments are stored as JSON under `data/runs/`. Probability sweeps are stored under `data/sweeps/`. Saved files include:
 
 - target success rate and random seed;
 - every agent and its success count;
@@ -24,9 +29,9 @@ Each experiment is stored as a JSON file under `data/runs/`. It includes:
 - run timestamp and compute duration.
 - cost per game, reward per win, and derived profit/loss analysis.
 
-The dashboard can reopen any saved run and export its complete result matrix as CSV. The UI accepts 1–10,000 agents and 1–10,000 games per agent, with a limit of 10,000,000 total games per run. Large matrices automatically switch to a compact raster renderer.
+The detailed mode can export its complete result matrix as CSV. The UI accepts 1–10,000 agents and 1–10,000 games per agent, with a limit of 10,000,000 total games per request. A sweep counts all 99 probability fields toward that limit. Large matrices automatically switch to a compact raster renderer.
 
-Saved runs can be deleted from the archive. Deletion is recoverable: files are moved from `data/runs/` to `data/trash/`.
+The visible archive has intentionally been removed from the streamlined interface. The API continues to preserve generated data on disk.
 
 ## API
 
@@ -34,6 +39,8 @@ Saved runs can be deleted from the archive. Deletion is recoverable: files are m
 - `GET /api/runs` lists saved runs.
 - `GET /api/runs/{id}` returns one complete run.
 - `DELETE /api/runs/{id}` removes a run from the archive and moves its JSON file to `data/trash/`.
+- `POST /api/sweeps` with `{ "agentCount": 200, "gamesPerAgent": 300, "gameCost": 1, "winReward": 100 }` runs and saves all 99 probability fields.
+- `GET /api/sweeps/{id}` returns a saved sweep and its aggregate first-success distributions.
 
 The optional `seed` field makes a run exactly reproducible.
 

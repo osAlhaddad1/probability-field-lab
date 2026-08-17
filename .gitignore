@@ -3,3 +3,5 @@ build/
 data/runs/*.json
 data/runs/*.tmp
 data/trash/*.json
+data/sweeps/*.json
+data/sweeps/*.tmp
