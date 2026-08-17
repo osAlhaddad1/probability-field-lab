@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 public final class Main {
     private static final int DEFAULT_AGENT_COUNT = 200;
     private static final int DEFAULT_GAMES_PER_AGENT = 300;
-    private static final int SWEEP_PROBABILITY_COUNT = 108;
+    private static final int SWEEP_PROBABILITY_COUNT = 1_089;
     private static final Pattern SUCCESS_RATE = Pattern.compile("\\\"successRate\\\"\\s*:\\s*([0-9.eE+-]+)");
     private static final Pattern SEED = Pattern.compile("\\\"seed\\\"\\s*:\\s*(-?[0-9]+)");
     private static final Pattern AGENT_COUNT_INPUT = Pattern.compile("\\\"agentCount\\\"\\s*:\\s*([0-9]+)");
@@ -269,29 +269,29 @@ public final class Main {
                                  double gameCost, double winReward) throws Exception {
         long started = System.nanoTime();
         List<Callable<SweepPoint>> tasks = new ArrayList<>(SWEEP_PROBABILITY_COUNT);
-        for (int probabilityTenths = 1; probabilityTenths <= 9; probabilityTenths++) {
-            final int tenths = probabilityTenths;
-            tasks.add(() -> runSweepPoint(tenths, mixSeed(seed, tenths * 1_000_003), agentCount, gamesPerAgent));
+        for (int probabilityHundredths = 1; probabilityHundredths <= 100; probabilityHundredths++) {
+            final int hundredths = probabilityHundredths;
+            tasks.add(() -> runSweepPoint(hundredths, mixSeed(seed, hundredths), agentCount, gamesPerAgent));
         }
-        for (int probabilityPercent = 1; probabilityPercent <= 99; probabilityPercent++) {
-            final int tenths = probabilityPercent * 10;
-            tasks.add(() -> runSweepPoint(tenths, mixSeed(seed, tenths * 1_000_003), agentCount, gamesPerAgent));
+        for (int probabilityHundredths = 110; probabilityHundredths <= 9_990; probabilityHundredths += 10) {
+            final int hundredths = probabilityHundredths;
+            tasks.add(() -> runSweepPoint(hundredths, mixSeed(seed, hundredths), agentCount, gamesPerAgent));
         }
 
         List<SweepPoint> points = new ArrayList<>(SWEEP_PROBABILITY_COUNT);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (var future : executor.invokeAll(tasks)) points.add(future.get());
         }
-        points.sort(Comparator.comparingInt(SweepPoint::probabilityTenths));
+        points.sort(Comparator.comparingInt(SweepPoint::probabilityHundredths));
         long durationMs = Math.max(1, (System.nanoTime() - started) / 1_000_000);
         String id = Instant.now().toEpochMilli() + "-" + UUID.randomUUID().toString().substring(0, 8);
         return new SweepResult(id, Instant.now().toString(), seed, durationMs, agentCount,
                 gamesPerAgent, gameCost, winReward, points);
     }
 
-    private SweepPoint runSweepPoint(int probabilityTenths, long probabilitySeed,
+    private SweepPoint runSweepPoint(int probabilityHundredths, long probabilitySeed,
                                      int agentCount, int gamesPerAgent) {
-        double probability = probabilityTenths / 1_000.0;
+        double probability = probabilityHundredths / 10_000.0;
         int[] firstSuccessCounts = new int[gamesPerAgent];
         long totalSuccesses = 0;
         double successSquares = 0;
@@ -323,7 +323,7 @@ public final class Main {
         double averageFirstSuccess = agentsWithSuccess == 0 ? 0 : firstSuccessSum / (double) agentsWithSuccess;
         int medianFirstSuccess = waitPercentile(firstSuccessCounts, agentsWithoutSuccess, agentCount, .5, gamesPerAgent);
         int p90FirstSuccess = waitPercentile(firstSuccessCounts, agentsWithoutSuccess, agentCount, .9, gamesPerAgent);
-        return new SweepPoint(probabilityTenths, totalSuccesses, agentsWithSuccess, agentsWithoutSuccess,
+        return new SweepPoint(probabilityHundredths, totalSuccesses, agentsWithSuccess, agentsWithoutSuccess,
                 averageSuccesses, Math.sqrt(variance), averageFirstSuccess, medianFirstSuccess,
                 p90FirstSuccess, firstSuccessCounts);
     }
@@ -502,7 +502,7 @@ public final class Main {
     }
 
     private record SweepPoint(
-            int probabilityTenths,
+            int probabilityHundredths,
             long totalSuccesses,
             int agentsWithSuccess,
             int agentsWithoutSuccess,
@@ -518,8 +518,8 @@ public final class Main {
             long failures = totalGames - totalSuccesses;
             double actualRate = totalSuccesses / (double) totalGames;
             double observedNet = totalSuccesses * winReward - totalGames * gameCost;
-            double probabilityPercent = probabilityTenths / 10.0;
-            double probability = probabilityTenths / 1_000.0;
+            double probabilityPercent = probabilityHundredths / 100.0;
+            double probability = probabilityHundredths / 10_000.0;
             StringBuilder json = new StringBuilder(256 + firstSuccessCounts.length * 3);
             json.append("{\"probabilityPercent\":").append(probabilityPercent).append(',')
                     .append("\"probability\":").append(probability).append(',')
@@ -561,9 +561,9 @@ public final class Main {
             Double firstWinningProbabilityPercent = null;
             Integer recommendedAttempts90 = null;
             for (SweepPoint point : points) {
-                double probability = point.probabilityTenths() / 1_000.0;
+                double probability = point.probabilityHundredths() / 10_000.0;
                 if (probability * winReward - gameCost > 1e-12) {
-                    firstWinningProbabilityPercent = point.probabilityTenths() / 10.0;
+                    firstWinningProbabilityPercent = point.probabilityHundredths() / 100.0;
                     recommendedAttempts90 = Math.max(1, (int) Math.ceil(Math.log(0.1) / Math.log(1 - probability)));
                     break;
                 }

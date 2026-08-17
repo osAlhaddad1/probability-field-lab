@@ -30,7 +30,7 @@
       <div class="mode-stack">
         <div class="mode-switch" role="group" aria-label="Experiment mode">
           <button class="mode-option active" data-mode="fixed" aria-pressed="true"><span>KNOWN ODDS</span><strong>One probability</strong></button>
-          <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 0.1—99%</strong></button>
+          <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 0.01—99.9%</strong></button>
         </div>
 
         <div id="fixed-rate-panel" class="rate-control">
@@ -45,8 +45,8 @@
         </div>
 
         <div id="sweep-rate-panel" class="sweep-primer hidden">
-          <span class="sweep-mark">108×</span>
-          <div><strong>No probability required.</strong><p>The engine tests 0.1% through 0.9%, then every whole-number probability from 1% through 99%.</p></div>
+          <span class="sweep-mark">1,089×</span>
+          <div><strong>No probability required.</strong><p>The engine tests every 0.01% from 0.01% to 1%, then every 0.1% from 1.1% to 99.9%.</p></div>
         </div>
       </div>
 
@@ -216,11 +216,11 @@
           <span class="step">02</span>
           <div><p class="eyebrow">UNKNOWN-ODDS LAB</p><h2 id="sweep-title">The probability atlas</h2></div>
         </div>
-        <p>One identical experiment across 108 odds: 0.1% through 0.9%, then 1% through 99%. The decision lens automatically finds the first profitable odds and its 90% move-on boundary.</p>
+        <p>One identical experiment across 1,089 odds: 0.01% steps through 1%, then 0.1% steps through 99.9%. The decision lens automatically finds the first profitable odds and its 90% move-on boundary.</p>
       </div>
 
       <div class="sweep-stats" aria-live="polite">
-        <div><span>PROBABILITIES TESTED</span><strong id="sweep-probability-count">108</strong></div>
+        <div><span>PROBABILITIES TESTED</span><strong id="sweep-probability-count">1,089</strong></div>
         <div><span>TOTAL TRIALS</span><strong id="sweep-total">—</strong></div>
         <div><span>BREAK-EVEN ODDS</span><strong id="sweep-breakeven">—</strong></div>
         <div><span>COMPUTE TIME</span><strong id="sweep-duration">—</strong></div>
@@ -233,8 +233,8 @@
           <p id="decision-summary">The engine will find the first tested probability with positive expected value, then calculate the attempts needed for at least a 90% chance of one win.</p>
         </div>
         <div class="decision-controls">
-          <label for="sweep-probability">ATLAS CURSOR <strong id="selected-probability">0.1%</strong></label>
-          <input id="sweep-probability" type="range" min="0" max="107" step="1" value="0" aria-label="Probability to inspect">
+          <label for="sweep-probability">ATLAS CURSOR <strong id="selected-probability">0.01%</strong></label>
+          <input id="sweep-probability" type="range" min="0" max="1088" step="1" value="0" aria-label="Probability to inspect">
           <div class="policy-lock">
             <span>AUTOMATIC STOP POLICY</span>
             <strong>FIRST POSITIVE-EV ODDS</strong>

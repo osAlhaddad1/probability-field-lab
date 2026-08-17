@@ -5,7 +5,7 @@ A dependency-free Java + JavaScript probability experiment. Each run launches a 
 The dashboard has two modes:
 
 - **Known odds** runs one detailed field at a chosen success probability.
-- **Unknown odds** repeats the complete field 108 times at 0.1%–0.9% and every whole-number probability from 1%–99%, then builds a ten-graph decision atlas around profit, risk, waiting time, and automatic move-on boundaries. Graph 01 includes an interactive deadline planner for either a concrete net-profit target or a realized ROI target from 1%–500%.
+- **Unknown odds** repeats the complete field 1,089 times: 0.01%–1.00% in 0.01% steps, then 1.1%–99.9% in 0.1% steps. It builds a ten-graph decision atlas around profit, risk, waiting time, and automatic move-on boundaries. Graph 01 includes an interactive deadline planner for either a concrete net-profit target or a realized ROI target from 1%–500%.
 
 ## Run it
 
@@ -39,7 +39,7 @@ The visible archive has intentionally been removed from the streamlined interfac
 - `GET /api/runs` lists saved runs.
 - `GET /api/runs/{id}` returns one complete run.
 - `DELETE /api/runs/{id}` removes a run from the archive and moves its JSON file to `data/trash/`.
-- `POST /api/sweeps` with `{ "agentCount": 200, "gamesPerAgent": 300, "gameCost": 1, "winReward": 100 }` runs and saves all 108 probability fields. It returns the first tested probability where `probability × reward − cost > 0` and the smallest attempt count where `1 − (1 − probability)^attempts ≥ 0.90`.
+- `POST /api/sweeps` with `{ "agentCount": 200, "gamesPerAgent": 300, "gameCost": 1, "winReward": 100 }` runs and saves all 1,089 probability fields. It returns the first tested probability where `probability × reward − cost > 0` and the smallest attempt count where `1 − (1 − probability)^attempts ≥ 0.90`.
 - `GET /api/sweeps/{id}` returns a saved sweep and its aggregate first-success distributions.
 
 The optional `seed` field makes a run exactly reproducible.

@@ -20,7 +20,7 @@ let currentSweep = null;
 let experimentMode = 'fixed';
 const sweepState = { selectedIndex: 0 };
 const targetPlannerState = { mode: 'profit', profit: 10, roiPercent: 100 };
-const SWEEP_PROBABILITY_COUNT = 108;
+const SWEEP_PROBABILITY_COUNT = 1089;
 const SWEEP_CONFIDENCE = .9;
 let matrixCell = 7;
 const chartModels = {};
@@ -73,8 +73,8 @@ function updateWorkload() {
   const multiplier = experimentMode === 'sweep' ? SWEEP_PROBABILITY_COUNT : 1;
   const total = agents * games * multiplier;
   totalGamesOutput.textContent = Number.isFinite(total) ? total.toLocaleString() : '—';
-  $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 108 FIELDS' : 'TOTAL GAMES';
-  runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 0.1—99% SWEEP' : 'RUN EXPERIMENT';
+  $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 1,089 FIELDS' : 'TOTAL GAMES';
+  runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 0.01—99.9% SWEEP' : 'RUN EXPERIMENT';
   const invalidEconomics = !Number.isFinite(gameCost) || gameCost < 0 || !Number.isFinite(winReward) || winReward < 0;
   const invalid = !Number.isInteger(agents) || agents < 1 || !Number.isInteger(games) || games < 1 || invalidEconomics;
   workloadWarning.classList.toggle('invalid', invalid);
@@ -83,7 +83,7 @@ function updateWorkload() {
     : invalid
       ? 'AGENTS AND GAMES MUST BE POSITIVE WHOLE NUMBERS'
       : experimentMode === 'sweep'
-        ? '108 PROBABILITIES · NO PROJECT LIMIT · MACHINE-BOUND'
+        ? '1,089 PROBABILITIES · NO PROJECT LIMIT · MACHINE-BOUND'
         : 'NO PROJECT LIMIT · CAPACITY DEPENDS ON THIS MACHINE';
   runButton.disabled = invalid;
   return { agents, games, gameCost, winReward, total, invalid };
@@ -919,7 +919,7 @@ function attemptBoundary(probability, confidence) {
 
 function formatProbability(probabilityPercent) {
   return probabilityPercent < 1
-    ? `${probabilityPercent.toFixed(1)}%`
+    ? `${probabilityPercent.toFixed(2)}%`
     : `${Number.isInteger(probabilityPercent) ? probabilityPercent.toFixed(0) : probabilityPercent.toFixed(1)}%`;
 }
 
@@ -931,7 +931,7 @@ function drawSweepLine(id, series, options = {}) {
   let maximum = options.maximum ?? Math.max(1, ...values);
   if (maximum <= minimum) maximum = minimum + 1;
   const ticks = [0, .5, 1].map(ratio => ({ value: minimum + (maximum - minimum) * ratio, ratio }));
-  const xLabels = options.xLabels ?? ['0.1%', '99%'];
+  const xLabels = options.xLabels ?? ['0.01%', '99.9%'];
   const { plotWidth, plotHeight } = chartFrame(chart, ticks, options.formatter ?? (value => value.toFixed(1)), xLabels);
   const count = Math.max(1, series[0]?.values.length ?? 1);
   const xValues = options.xValues ?? Array.from({ length: count }, (_, index) => index);
@@ -1136,13 +1136,13 @@ function updateSweepDecision() {
   if (!hasWinningOdds) {
     $('#decision-attempt').textContent = 'DO NOT PLAY';
     $('#decision-confidence-copy').textContent = 'NO TESTED ODDS HAVE POSITIVE EXPECTED VALUE';
-    $('#decision-winning-probability').textContent = 'NONE ≤99%';
+    $('#decision-winning-probability').textContent = 'NONE ≤99.9%';
     $('#decision-spend').textContent = formatFinancial(0);
     const marginalOutput = $('#decision-marginal');
-    const bestValue = .99 * currentSweep.winReward - currentSweep.gameCost;
+    const bestValue = .999 * currentSweep.winReward - currentSweep.gameCost;
     marginalOutput.textContent = `${bestValue >= 0 ? '+' : ''}${formatFinancial(bestValue)}`;
     marginalOutput.className = bestValue >= 0 ? 'positive' : 'negative';
-    $('#decision-summary').textContent = `Even at 99%, reward × probability − cost is not positive. Under this rule, the rational move-on boundary is zero attempts: choose a different game.`;
+    $('#decision-summary').textContent = `Even at 99.9%, reward × probability − cost is not positive. Under this rule, the rational move-on boundary is zero attempts: choose a different game.`;
     drawSweepAtlas(currentSweep);
     return;
   }
@@ -1175,9 +1175,9 @@ function drawSweepAtlas(sweep) {
   drawTargetPlannerGraph(sweep);
 
   const outcomeChart = getChartContext('sweep-outcomes-chart', true);
-  const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['0.1%', '99%']);
+  const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['0.01%', '99.9%']);
   const outcomeX = value => outcomeChart.pad.left + (value - targets[0]) / (targets[targets.length - 1] - targets[0]) * outcomeFrame.plotWidth;
-  const outcomeWidth = Math.max(1, outcomeFrame.plotWidth / 100 * .78);
+  const outcomeWidth = Math.max(.55, outcomeFrame.plotWidth / 1000 * .72);
   points.forEach((point, index) => {
     const successHeight = point.actualRate * outcomeFrame.plotHeight;
     outcomeChart.ctx.fillStyle = index === selectedIndex ? '#fbfbf7' : '#d6f25c';
