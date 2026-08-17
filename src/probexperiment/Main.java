@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -33,9 +34,6 @@ import java.util.regex.Pattern;
 public final class Main {
     private static final int DEFAULT_AGENT_COUNT = 200;
     private static final int DEFAULT_GAMES_PER_AGENT = 300;
-    private static final int MAX_AGENT_COUNT = 10_000;
-    private static final int MAX_GAMES_PER_AGENT = 10_000;
-    private static final int MAX_TOTAL_GAMES = 10_000_000;
     private static final int SWEEP_PROBABILITY_COUNT = 108;
     private static final Pattern SUCCESS_RATE = Pattern.compile("\\\"successRate\\\"\\s*:\\s*([0-9.eE+-]+)");
     private static final Pattern SEED = Pattern.compile("\\\"seed\\\"\\s*:\\s*(-?[0-9]+)");
@@ -108,29 +106,24 @@ public final class Main {
                 }
                 long requestedAgents = findLong(AGENT_COUNT_INPUT, body, DEFAULT_AGENT_COUNT);
                 long requestedGames = findLong(GAMES_PER_AGENT_INPUT, body, DEFAULT_GAMES_PER_AGENT);
-                if (requestedAgents < 1 || requestedAgents > MAX_AGENT_COUNT) {
-                    sendJson(exchange, 400, "{\"error\":\"agentCount must be between 1 and " + MAX_AGENT_COUNT + "\"}");
+                if (requestedAgents < 1 || requestedAgents > Integer.MAX_VALUE) {
+                    sendJson(exchange, 400, "{\"error\":\"agentCount must be a positive whole number supported by the Java engine\"}");
                     return;
                 }
-                if (requestedGames < 1 || requestedGames > MAX_GAMES_PER_AGENT) {
-                    sendJson(exchange, 400, "{\"error\":\"gamesPerAgent must be between 1 and " + MAX_GAMES_PER_AGENT + "\"}");
+                if (requestedGames < 1 || requestedGames > Integer.MAX_VALUE) {
+                    sendJson(exchange, 400, "{\"error\":\"gamesPerAgent must be a positive whole number supported by the Java engine\"}");
                     return;
                 }
                 int agentCount = (int) requestedAgents;
                 int gamesPerAgent = (int) requestedGames;
-                long totalGames = (long) agentCount * gamesPerAgent;
-                if (totalGames > MAX_TOTAL_GAMES) {
-                    sendJson(exchange, 400, "{\"error\":\"The experiment is limited to " + MAX_TOTAL_GAMES + " total games\"}");
-                    return;
-                }
                 double gameCost = findDouble(GAME_COST_INPUT, body, 1.0);
                 double winReward = findDouble(WIN_REWARD_INPUT, body, 100.0);
-                if (!Double.isFinite(gameCost) || gameCost < 0 || gameCost > 1_000_000_000) {
-                    sendJson(exchange, 400, "{\"error\":\"gameCost must be between 0 and 1,000,000,000\"}");
+                if (!Double.isFinite(gameCost) || gameCost < 0) {
+                    sendJson(exchange, 400, "{\"error\":\"gameCost must be finite and non-negative\"}");
                     return;
                 }
-                if (!Double.isFinite(winReward) || winReward < 0 || winReward > 1_000_000_000) {
-                    sendJson(exchange, 400, "{\"error\":\"winReward must be between 0 and 1,000,000,000\"}");
+                if (!Double.isFinite(winReward) || winReward < 0) {
+                    sendJson(exchange, 400, "{\"error\":\"winReward must be finite and non-negative\"}");
                     return;
                 }
                 long seed = findLong(SEED, body, new SplittableRandom().nextLong());
@@ -189,29 +182,24 @@ public final class Main {
                 String body = readBody(exchange);
                 long requestedAgents = findLong(AGENT_COUNT_INPUT, body, DEFAULT_AGENT_COUNT);
                 long requestedGames = findLong(GAMES_PER_AGENT_INPUT, body, DEFAULT_GAMES_PER_AGENT);
-                if (requestedAgents < 1 || requestedAgents > MAX_AGENT_COUNT) {
-                    sendJson(exchange, 400, "{\"error\":\"agentCount must be between 1 and " + MAX_AGENT_COUNT + "\"}");
+                if (requestedAgents < 1 || requestedAgents > Integer.MAX_VALUE) {
+                    sendJson(exchange, 400, "{\"error\":\"agentCount must be a positive whole number supported by the Java engine\"}");
                     return;
                 }
-                if (requestedGames < 1 || requestedGames > MAX_GAMES_PER_AGENT) {
-                    sendJson(exchange, 400, "{\"error\":\"gamesPerAgent must be between 1 and " + MAX_GAMES_PER_AGENT + "\"}");
+                if (requestedGames < 1 || requestedGames > Integer.MAX_VALUE) {
+                    sendJson(exchange, 400, "{\"error\":\"gamesPerAgent must be a positive whole number supported by the Java engine\"}");
                     return;
                 }
                 int agentCount = (int) requestedAgents;
                 int gamesPerAgent = (int) requestedGames;
-                long totalGames = (long) SWEEP_PROBABILITY_COUNT * agentCount * gamesPerAgent;
-                if (totalGames > MAX_TOTAL_GAMES) {
-                    sendJson(exchange, 400, "{\"error\":\"The 108-probability sweep is limited to " + MAX_TOTAL_GAMES + " total games\"}");
-                    return;
-                }
                 double gameCost = findDouble(GAME_COST_INPUT, body, 1.0);
                 double winReward = findDouble(WIN_REWARD_INPUT, body, 100.0);
-                if (!Double.isFinite(gameCost) || gameCost < 0 || gameCost > 1_000_000_000) {
-                    sendJson(exchange, 400, "{\"error\":\"gameCost must be between 0 and 1,000,000,000\"}");
+                if (!Double.isFinite(gameCost) || gameCost < 0) {
+                    sendJson(exchange, 400, "{\"error\":\"gameCost must be finite and non-negative\"}");
                     return;
                 }
-                if (!Double.isFinite(winReward) || winReward < 0 || winReward > 1_000_000_000) {
-                    sendJson(exchange, 400, "{\"error\":\"winReward must be between 0 and 1,000,000,000\"}");
+                if (!Double.isFinite(winReward) || winReward < 0) {
+                    sendJson(exchange, 400, "{\"error\":\"winReward must be finite and non-negative\"}");
                     return;
                 }
                 long seed = findLong(SEED, body, new SplittableRandom().nextLong());
@@ -258,7 +246,7 @@ public final class Main {
             }
         }
         agents.sort(Comparator.comparingInt(AgentResult::id));
-        int totalSuccesses = agents.stream().mapToInt(AgentResult::successes).sum();
+        long totalSuccesses = agents.stream().mapToLong(AgentResult::successes).sum();
         long durationMs = Math.max(1, (System.nanoTime() - started) / 1_000_000);
         String id = Instant.now().toEpochMilli() + "-" + UUID.randomUUID().toString().substring(0, 8);
         return new RunResult(id, Instant.now().toString(), rate, seed, durationMs, totalSuccesses,
@@ -306,7 +294,7 @@ public final class Main {
         double probability = probabilityTenths / 1_000.0;
         int[] firstSuccessCounts = new int[gamesPerAgent];
         long totalSuccesses = 0;
-        long successSquares = 0;
+        double successSquares = 0;
         int agentsWithSuccess = 0;
         long firstSuccessSum = 0;
 
@@ -321,7 +309,7 @@ public final class Main {
                 }
             }
             totalSuccesses += successes;
-            successSquares += (long) successes * successes;
+            successSquares += (double) successes * successes;
             if (firstSuccess >= 0) {
                 agentsWithSuccess++;
                 firstSuccessCounts[firstSuccess]++;
@@ -567,7 +555,9 @@ public final class Main {
             List<SweepPoint> points
     ) {
         String toJson() {
-            long totalGames = (long) SWEEP_PROBABILITY_COUNT * agentCount * gamesPerAgent;
+            BigInteger totalGames = BigInteger.valueOf(SWEEP_PROBABILITY_COUNT)
+                    .multiply(BigInteger.valueOf(agentCount))
+                    .multiply(BigInteger.valueOf(gamesPerAgent));
             Double firstWinningProbabilityPercent = null;
             Integer recommendedAttempts90 = null;
             for (SweepPoint point : points) {
@@ -613,7 +603,7 @@ public final class Main {
             double successRate,
             long seed,
             long durationMs,
-            int totalSuccesses,
+            long totalSuccesses,
             int agentCount,
             int gamesPerAgent,
             double gameCost,
@@ -632,7 +622,7 @@ public final class Main {
                     .append("\"seed\":").append(seed).append(',')
                     .append("\"durationMs\":").append(durationMs).append(',')
                     .append("\"totalSuccesses\":").append(totalSuccesses).append(',')
-                    .append("\"totalGames\":").append(agentCount * gamesPerAgent).append(',')
+                    .append("\"totalGames\":").append((long) agentCount * gamesPerAgent).append(',')
                     .append("\"agents\":[");
             for (int i = 0; i < agents.size(); i++) {
                 if (i > 0) json.append(',');

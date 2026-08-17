@@ -29,7 +29,7 @@ Detailed experiments are stored as JSON under `data/runs/`. Probability sweeps a
 - run timestamp and compute duration.
 - cost per game, reward per win, and derived profit/loss analysis.
 
-The detailed mode can export its complete result matrix as CSV. The UI accepts 1–10,000 agents and 1–10,000 games per agent, with a limit of 10,000,000 total games per request. A sweep counts all 108 probability fields toward that limit. Large matrices automatically switch to a compact raster renderer.
+The detailed mode can export its complete result matrix as CSV. The application imposes no configured ceiling on agents, games, total trials, cost, or reward. Positive counts and finite non-negative financial inputs are required; practical capacity is determined by the machine's available memory, disk, and compute time. Large matrices automatically switch to a compact raster renderer.
 
 The visible archive has intentionally been removed from the streamlined interface. The API continues to preserve generated data on disk.
 

@@ -19,7 +19,6 @@ let currentRun = null;
 let currentSweep = null;
 let experimentMode = 'fixed';
 const sweepState = { selectedIndex: 0 };
-const MAX_TOTAL_GAMES = 10000000;
 const SWEEP_PROBABILITY_COUNT = 108;
 const SWEEP_CONFIDENCE = .9;
 let matrixCell = 7;
@@ -55,36 +54,36 @@ rateNumber.addEventListener('input', () => setRate(rateNumber.value));
 rateSlider.addEventListener('input', () => setRate(rateSlider.value));
 setRate(1);
 
-function integerValue(input, fallback) {
-  const value = Math.floor(Number(input.value));
-  return Number.isFinite(value) ? value : fallback;
+function integerValue(input) {
+  if (input.value.trim() === '') return NaN;
+  return Number(input.value);
 }
 
-function financialValue(input, fallback) {
-  const value = Number(input.value);
-  return Number.isFinite(value) ? value : fallback;
+function financialValue(input) {
+  if (input.value.trim() === '') return NaN;
+  return Number(input.value);
 }
 
 function updateWorkload() {
-  const agents = integerValue(agentCountInput, 200);
-  const games = integerValue(gameCountInput, 300);
-  const gameCost = financialValue(gameCostInput, 1);
-  const winReward = financialValue(winRewardInput, 100);
+  const agents = integerValue(agentCountInput);
+  const games = integerValue(gameCountInput);
+  const gameCost = financialValue(gameCostInput);
+  const winReward = financialValue(winRewardInput);
   const multiplier = experimentMode === 'sweep' ? SWEEP_PROBABILITY_COUNT : 1;
   const total = agents * games * multiplier;
   totalGamesOutput.textContent = Number.isFinite(total) ? total.toLocaleString() : '—';
   $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 108 FIELDS' : 'TOTAL GAMES';
   runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 0.1—99% SWEEP' : 'RUN EXPERIMENT';
-  const invalidEconomics = gameCost < 0 || gameCost > 1000000000 || winReward < 0 || winReward > 1000000000;
-  const invalid = agents < 1 || agents > 10000 || games < 1 || games > 10000 || total > MAX_TOTAL_GAMES || invalidEconomics;
+  const invalidEconomics = !Number.isFinite(gameCost) || gameCost < 0 || !Number.isFinite(winReward) || winReward < 0;
+  const invalid = !Number.isInteger(agents) || agents < 1 || !Number.isInteger(games) || games < 1 || invalidEconomics;
   workloadWarning.classList.toggle('invalid', invalid);
-  workloadWarning.textContent = total > MAX_TOTAL_GAMES
-    ? `${total.toLocaleString()} EXCEEDS THE 10,000,000 LIMIT`
-    : invalidEconomics
-      ? 'COST AND REWARD MUST BE BETWEEN 0 AND 1,000,000,000'
+  workloadWarning.textContent = invalidEconomics
+    ? 'COST AND REWARD MUST BE FINITE, NON-NEGATIVE NUMBERS'
+    : invalid
+      ? 'AGENTS AND GAMES MUST BE POSITIVE WHOLE NUMBERS'
       : experimentMode === 'sweep'
-        ? '108 PROBABILITIES · MAXIMUM 10,000,000 TOTAL GAMES'
-        : 'MAXIMUM 10,000,000 TOTAL GAMES';
+        ? '108 PROBABILITIES · NO PROJECT LIMIT · MACHINE-BOUND'
+        : 'NO PROJECT LIMIT · CAPACITY DEPENDS ON THIS MACHINE';
   runButton.disabled = invalid;
   return { agents, games, gameCost, winReward, total, invalid };
 }
@@ -719,6 +718,8 @@ function drawFirstSuccess(run) {
 function formatFinancial(value, digits = 2) {
   if (!Number.isFinite(value)) return '∞';
   const absolute = Math.abs(value);
+  if (absolute >= 1000000000000000) return value.toExponential(2).replace('e+', 'e');
+  if (absolute >= 1000000000000) return `${(value / 1000000000000).toFixed(2)}T`;
   if (absolute >= 1000000000) return `${(value / 1000000000).toFixed(2)}B`;
   if (absolute >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
   if (absolute >= 10000) return `${(value / 1000).toFixed(2)}K`;

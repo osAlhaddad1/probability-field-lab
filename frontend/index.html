@@ -51,12 +51,12 @@
       </div>
 
       <div class="run-spec">
-        <label><span>MINI AGENTS</span><input id="agent-count" type="number" min="1" max="10000" step="1" value="200"></label>
-        <label><span>GAMES / AGENT</span><input id="game-count" type="number" min="1" max="10000" step="1" value="300"></label>
-        <label><span>COST / GAME</span><input id="game-cost" type="number" min="0" max="1000000000" step="0.01" value="1"></label>
-        <label><span>REWARD / WIN</span><input id="win-reward" type="number" min="0" max="1000000000" step="0.01" value="100"></label>
+        <label><span>MINI AGENTS</span><input id="agent-count" type="number" min="1" step="1" value="200"></label>
+        <label><span>GAMES / AGENT</span><input id="game-count" type="number" min="1" step="1" value="300"></label>
+        <label><span>COST / GAME</span><input id="game-cost" type="number" min="0" step="any" value="1"></label>
+        <label><span>REWARD / WIN</span><input id="win-reward" type="number" min="0" step="any" value="100"></label>
         <div><span id="total-games-label">TOTAL GAMES</span><strong id="total-games">60,000</strong></div>
-        <p id="workload-warning" class="workload-warning">MAXIMUM 10,000,000 TOTAL GAMES</p>
+        <p id="workload-warning" class="workload-warning">NO PROJECT LIMIT · CAPACITY DEPENDS ON THIS MACHINE</p>
       </div>
 
       <button id="run-button" class="run-button">
