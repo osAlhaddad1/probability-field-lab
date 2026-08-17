@@ -20,9 +20,9 @@ var suffix = toLower(uniqueString(subscription().subscriptionId, resourceGroup()
 var appName = 'prob-field-${suffix}'
 var planName = 'prob-field-plan-${suffix}'
 var deployIdentityName = 'prob-field-github-${suffix}'
-var contributorRoleDefinitionId = subscriptionResourceId(
+var websiteContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
-  'b24988ac-6180-42a0-ab88-20f7382dd24c'
+  'de139f84-1756-47ae-9be6-808fbbe84772'
 )
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
@@ -86,12 +86,12 @@ resource githubMainCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/
 }
 
 resource deploymentRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(webApp.id, deployIdentity.id, contributorRoleDefinitionId)
+  name: guid(webApp.id, deployIdentity.id, websiteContributorRoleDefinitionId)
   scope: webApp
   properties: {
     principalId: deployIdentity.properties.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: contributorRoleDefinitionId
+    roleDefinitionId: websiteContributorRoleDefinitionId
   }
 }
 
