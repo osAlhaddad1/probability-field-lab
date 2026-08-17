@@ -1,0 +1,5 @@
+out/
+build/
+data/runs/*.json
+data/runs/*.tmp
+data/trash/*.json

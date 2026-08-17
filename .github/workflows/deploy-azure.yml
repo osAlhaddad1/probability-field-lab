@@ -1,0 +1,76 @@
+name: Build and deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '21'
+
+      - name: Build executable application
+        run: npm run build
+
+      - name: Smoke test packaged server
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/probability-field-data"
+          PORT=8090 HOST=127.0.0.1 EXPERIMENT_DATA_ROOT="$RUNNER_TEMP/probability-field-data" \
+            java -jar build/probability-field-lab.jar > "$RUNNER_TEMP/probability-field.log" 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid"' EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8090/api/health | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/probability-field.log"
+          exit 1
+
+      - name: Upload deployable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: probability-field-lab
+          path: build/probability-field-lab.jar
+          if-no-files-found: error
+
+  deploy:
+    if: ${{ vars.AZURE_WEBAPP_NAME != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download deployable JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: probability-field-lab
+          path: deploy
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: deploy/probability-field-lab.jar

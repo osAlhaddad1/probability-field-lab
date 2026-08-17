@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run and inspect configurable multi-agent probability experiments.">
+  <title>Probability Field Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Probability Field Lab home">
+      <span class="brand-mark"><i></i><i></i><i></i><i></i></span>
+      <span>PROBABILITY<br>FIELD LAB</span>
+    </a>
+    <div class="system-status"><span></span> JAVA ENGINE ONLINE</div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">MONTE CARLO WORKBENCH / 01</p>
+        <h1>Make chance<br><em>visible.</em></h1>
+      </div>
+      <p class="intro">Choose how many independent agents to launch, how many probability games each one plays, and the odds of success. Every outcome is generated concurrently and preserved after each run.</p>
+    </section>
+
+    <section class="control-deck" aria-labelledby="experiment-title">
+      <div class="deck-heading">
+        <span class="step">01</span>
+        <div><p class="eyebrow">EXPERIMENT INPUT</p><h2 id="experiment-title">Set the odds</h2></div>
+      </div>
+
+      <div class="rate-control">
+        <label for="rate-number">Success probability</label>
+        <div class="rate-readout">
+          <input id="rate-number" type="number" min="0" max="100" step="0.1" value="1" aria-describedby="rate-help">
+          <span>%</span>
+        </div>
+        <input id="rate-slider" type="range" min="0" max="100" step="0.1" value="1" aria-label="Success probability slider">
+        <div class="range-labels"><span>0 / IMPOSSIBLE</span><span>100 / CERTAIN</span></div>
+        <p id="rate-help">Applied independently to every game in the experiment.</p>
+      </div>
+
+      <div class="run-spec">
+        <label><span>MINI AGENTS</span><input id="agent-count" type="number" min="1" max="10000" step="1" value="200"></label>
+        <label><span>GAMES / AGENT</span><input id="game-count" type="number" min="1" max="10000" step="1" value="300"></label>
+        <label><span>COST / GAME</span><input id="game-cost" type="number" min="0" max="1000000000" step="0.01" value="1"></label>
+        <label><span>REWARD / WIN</span><input id="win-reward" type="number" min="0" max="1000000000" step="0.01" value="100"></label>
+        <div><span>TOTAL GAMES</span><strong id="total-games">60,000</strong></div>
+        <p id="workload-warning" class="workload-warning">MAXIMUM 10,000,000 TOTAL GAMES</p>
+      </div>
+
+      <button id="run-button" class="run-button">
+        <span class="button-label">RUN EXPERIMENT</span>
+        <span class="button-working">GENERATING FIELD…</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M14 7l5 5-5 5"/></svg>
+      </button>
+    </section>
+
+    <section id="results" class="results hidden" aria-labelledby="results-title">
+      <div class="section-head">
+        <div class="deck-heading">
+          <span class="step">02</span>
+          <div><p class="eyebrow">OUTCOME FIELD</p><h2 id="results-title">Run results</h2></div>
+        </div>
+        <button id="export-button" class="ghost-button">EXPORT CSV ↗</button>
+      </div>
+
+      <div class="stats" aria-live="polite">
+        <article><span>SUCCESSES</span><strong id="success-count">—</strong><small id="success-percent">—</small></article>
+        <article><span>FAILURES</span><strong id="failure-count">—</strong><small id="failure-percent">—</small></article>
+        <article><span>EXPECTED</span><strong id="expected-count">—</strong><small>STATISTICAL TARGET</small></article>
+        <article><span>COMPUTE TIME</span><strong id="duration">—</strong><small>JAVA / VIRTUAL THREADS</small></article>
+      </div>
+
+      <div class="legend-bar">
+        <div><span class="legend success"></span> SUCCESS</div>
+        <div><span class="legend failure"></span> FAILURE</div>
+        <p id="run-meta">—</p>
+      </div>
+
+      <div class="matrix-shell">
+        <div class="axis-y">MINI AGENTS →</div>
+        <div id="matrix-axis-x" class="axis-x">PROBABILITY GAMES →</div>
+        <div id="matrix-scroll" class="matrix-scroll">
+          <canvas id="matrix" role="img" aria-label="Experiment result table: agents in rows, games in columns"></canvas>
+          <div id="tooltip" class="tooltip" role="status"></div>
+        </div>
+      </div>
+
+      <section class="analytics" aria-labelledby="analytics-title">
+        <div class="analytics-heading">
+          <div>
+            <p class="eyebrow">FIVE ANALYTICAL PORTRAITS</p>
+            <h3 id="analytics-title">The whole field,<br>seen five ways.</h3>
+          </div>
+          <p>Each view compresses the complete experiment into a different signal: convergence over time, game-to-game variation, the distribution between agents, and final performance ranking. Hover to inspect; click to pin a value.</p>
+        </div>
+
+        <div class="chart-grid">
+          <article class="chart-card chart-wide">
+            <header>
+              <span class="chart-number">GRAPH / 01</span>
+              <div><h4>Cumulative convergence</h4><p>Does the observed success rate settle toward the probability you chose?</p></div>
+            </header>
+            <canvas id="convergence-chart" class="data-chart" role="img" aria-label="Cumulative observed success rate compared with the target rate"></canvas>
+            <footer><span class="key observed"></span>OBSERVED <span class="key target"></span>TARGET <strong id="convergence-insight">—</strong></footer>
+          </article>
+
+          <article class="chart-card">
+            <header>
+              <span class="chart-number">GRAPH / 02</span>
+              <div><h4>Game pulse</h4><p>How many agents succeeded in each probability game?</p></div>
+            </header>
+            <canvas id="game-chart" class="data-chart" role="img" aria-label="Success count for each probability game"></canvas>
+            <footer><span class="key observed"></span>SUCCESS COUNT <strong id="game-insight">—</strong></footer>
+          </article>
+
+          <article class="chart-card">
+            <header>
+              <span class="chart-number">GRAPH / 03</span>
+              <div><h4>Agent distribution</h4><p>How many agents ended with zero, one, two, or more successes?</p></div>
+            </header>
+            <canvas id="distribution-chart" class="data-chart" role="img" aria-label="Distribution of total successes per agent"></canvas>
+            <footer><span class="key observed"></span>AGENT FREQUENCY <strong id="distribution-insight">—</strong></footer>
+          </article>
+
+          <article class="chart-card chart-wide rank-card">
+            <header>
+              <span class="chart-number">GRAPH / 04</span>
+              <div><h4>Agent ranking</h4><p>Every agent ordered from the highest success count to the lowest.</p></div>
+            </header>
+            <canvas id="ranking-chart" class="data-chart" role="img" aria-label="All agents ranked by their total number of successes"></canvas>
+            <footer><span class="key observed"></span>EACH BAR IS ONE AGENT <strong id="ranking-insight">—</strong></footer>
+          </article>
+
+          <article class="chart-card chart-wide first-success-card waiting-card">
+            <header>
+              <span class="chart-number">GRAPH / 05</span>
+              <div><h4>Time to first success</h4><p>How many games did each agent play before achieving its first success?</p></div>
+            </header>
+
+            <div class="waiting-toolbar" aria-label="Waiting-time graph controls">
+              <div class="waiting-control-group"><span>VALUE</span><button class="waiting-control active" data-wait-metric="count" aria-pressed="true">COUNT</button><button class="waiting-control" data-wait-metric="percent" aria-pressed="false">PERCENT</button></div>
+              <div class="waiting-control-group"><span>SCALE</span><button class="waiting-control active" data-wait-scale="linear" aria-pressed="true">LINEAR</button><button class="waiting-control" data-wait-scale="log" aria-pressed="false">LOG</button></div>
+              <div class="waiting-control-group waiting-layers"><span>LAYERS</span><button class="waiting-control active" data-wait-layer="expected" aria-pressed="true">EXPECTED</button><button class="waiting-control active" data-wait-layer="cumulative" aria-pressed="true">CUMULATIVE</button><button class="waiting-control" data-wait-layer="survival" aria-pressed="false">STILL WAITING</button><button class="waiting-control active" data-wait-layer="percentiles" aria-pressed="true">PERCENTILES</button></div>
+              <div class="waiting-control-group"><span>ACTIONS</span><button id="waiting-zoom" class="waiting-control" disabled>ZOOM SELECTION</button><button id="waiting-reset" class="waiting-control">RESET VIEW</button></div>
+            </div>
+
+            <div class="waiting-instruction"><span class="brush-icon"></span><strong>DRAG ACROSS THE PLOT TO SELECT A RANGE</strong><span id="waiting-view-label">VIEWING ALL GAMES</span></div>
+            <canvas id="first-success-chart" class="data-chart waiting-chart" role="img" aria-label="Interactive count of agents by games played before first success; drag to select a game range"></canvas>
+
+            <div class="waiting-selection" aria-live="polite">
+              <div class="selection-range"><span>SELECTED RANGE</span><strong id="waiting-range">ALL GAMES</strong></div>
+              <div><span>AGENTS</span><strong id="waiting-agents">—</strong></div>
+              <div><span>SHARE</span><strong id="waiting-share">—</strong></div>
+              <div><span>EXPECTED</span><strong id="waiting-expected">—</strong></div>
+              <div><span>OBS − EXP</span><strong id="waiting-delta">—</strong></div>
+              <div><span>AVG WAIT</span><strong id="waiting-average">—</strong></div>
+              <div><span>MEDIAN WAIT</span><strong id="waiting-median">—</strong></div>
+            </div>
+
+            <footer><span class="key observed"></span>OBSERVED <span class="key target"></span>EXPECTED <span class="key cumulative"></span>CUMULATIVE <span class="key survival"></span>STILL WAITING <span class="key never"></span>NO SUCCESS <strong id="first-success-insight">—</strong></footer>
+          </article>
+        </div>
+
+        <section class="finance-analysis" aria-labelledby="finance-title">
+          <div class="finance-heading">
+            <div><p class="eyebrow">EXPERIMENT ECONOMICS</p><h3 id="finance-title">The price<br>of probability.</h3></div>
+            <p>Cost is charged for every game played. Reward is earned for every success. These views show whether the observed field created or destroyed value—and where the economics break even.</p>
+          </div>
+
+          <div class="finance-stats" aria-live="polite">
+            <div><span>TOTAL COST</span><strong id="finance-cost">—</strong></div>
+            <div><span>GROSS REWARD</span><strong id="finance-reward">—</strong></div>
+            <div><span>NET P&amp;L</span><strong id="finance-net">—</strong></div>
+            <div><span>ROI</span><strong id="finance-roi">—</strong></div>
+            <div><span>BREAK-EVEN RATE</span><strong id="finance-breakeven">—</strong></div>
+          </div>
+
+          <div class="finance-grid">
+            <article class="finance-card finance-wide">
+              <header><span>FINANCE / 01</span><div><h4>Cumulative P&amp;L</h4><p>Observed and statistically expected net value as each game round completes.</p></div></header>
+              <canvas id="pnl-chart" class="data-chart finance-chart" role="img" aria-label="Cumulative observed and expected profit or loss across game rounds"></canvas>
+              <footer><span class="key observed"></span>OBSERVED P&amp;L <span class="key target"></span>EXPECTED P&amp;L <strong id="pnl-insight">—</strong></footer>
+            </article>
+
+            <article class="finance-card">
+              <header><span>FINANCE / 02</span><div><h4>Agent profit distribution</h4><p>How profit and loss are distributed across the complete agent population.</p></div></header>
+              <canvas id="agent-profit-chart" class="data-chart finance-chart" role="img" aria-label="Distribution of net profit or loss per agent"></canvas>
+              <footer><span class="key positive"></span>PROFIT <span class="key negative"></span>LOSS <strong id="agent-profit-insight">—</strong></footer>
+            </article>
+
+            <article class="finance-card sensitivity-card">
+              <header><span>FINANCE / 03</span><div><h4>Profitability sensitivity</h4><p>Expected experiment value at every possible success probability.</p></div></header>
+              <canvas id="sensitivity-chart" class="data-chart finance-chart" role="img" aria-label="Expected net value by success probability with break-even point"></canvas>
+              <footer><span class="key target"></span>EXPECTED VALUE <span class="key current"></span>CURRENT TARGET <strong id="sensitivity-insight">—</strong></footer>
+            </article>
+          </div>
+        </section>
+        <div id="chart-tooltip" class="chart-tooltip" role="status"></div>
+      </section>
+    </section>
+
+    <section class="history" aria-labelledby="history-title">
+      <div class="section-head">
+        <div class="deck-heading">
+          <span class="step">03</span>
+          <div><p class="eyebrow">SAVED LOCALLY</p><h2 id="history-title">Run archive</h2></div>
+        </div>
+        <button id="refresh-history" class="ghost-button">REFRESH</button>
+      </div>
+      <div id="history-list" class="history-list"><p class="empty">No saved runs yet.</p></div>
+    </section>
+  </main>
+
+  <footer><span>PROBABILITY FIELD LAB</span><span>CONFIGURABLE SCALE / REPRODUCIBLE BY SEED</span></footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>
