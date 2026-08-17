@@ -19,6 +19,7 @@ let currentRun = null;
 let currentSweep = null;
 let experimentMode = 'fixed';
 const sweepState = { selectedIndex: 0 };
+const targetPlannerState = { mode: 'profit', profit: 10, roiPercent: 100 };
 const SWEEP_PROBABILITY_COUNT = 108;
 const SWEEP_CONFIDENCE = .9;
 let matrixCell = 7;
@@ -970,6 +971,130 @@ function drawSweepLine(id, series, options = {}) {
   return { chart, x, y, minimum, maximum, plotWidth, plotHeight };
 }
 
+function targetPlannerResult(sweep) {
+  const cost = sweep.gameCost;
+  const reward = sweep.winReward;
+  const roi = targetPlannerState.roiPercent / 100;
+  const desiredProfit = targetPlannerState.profit;
+  let attempts;
+
+  if (cost === 0) {
+    const feasible = targetPlannerState.mode === 'profit' ? desiredProfit <= reward : reward > 0;
+    attempts = feasible ? Infinity : 0;
+  } else if (targetPlannerState.mode === 'profit') {
+    attempts = Math.max(0, Math.floor((reward - desiredProfit) / cost + 1e-12));
+  } else {
+    attempts = Math.max(0, Math.floor(reward / (cost * (1 + roi)) + 1e-12));
+  }
+
+  const cumulativeCost = Number.isFinite(attempts) ? attempts * cost : 0;
+  const profitAtDeadline = attempts > 0 ? reward - cumulativeCost : null;
+  const concreteRoiTarget = targetPlannerState.mode === 'roi' && attempts > 0
+    ? cumulativeCost * roi
+    : desiredProfit;
+  return { attempts, cumulativeCost, profitAtDeadline, concreteRoiTarget };
+}
+
+function chanceWithin(probability, attempts) {
+  if (attempts === Infinity) return probability > 0 ? 1 : 0;
+  if (attempts <= 0 || probability <= 0) return 0;
+  if (probability >= 1) return 1;
+  return -Math.expm1(attempts * Math.log1p(-probability));
+}
+
+function syncTargetPlannerControls(sweep) {
+  const profitMode = targetPlannerState.mode === 'profit';
+  const range = $('#target-range');
+  const exact = $('#target-number');
+  const maximumProfit = Math.max(0, sweep.winReward);
+  const sliderMaximum = maximumProfit > 0 ? maximumProfit : 1;
+  const value = profitMode
+    ? Math.max(0, targetPlannerState.profit)
+    : Math.max(1, Math.min(500, targetPlannerState.roiPercent));
+  const rangeValue = profitMode ? Math.min(sliderMaximum, value) : value;
+
+  if (profitMode) targetPlannerState.profit = value;
+  else targetPlannerState.roiPercent = value;
+  range.min = profitMode ? 0 : 1;
+  range.max = profitMode ? sliderMaximum : 500;
+  range.step = profitMode ? Math.max(sliderMaximum / 500, Number.EPSILON) : 1;
+  range.value = rangeValue;
+  exact.min = profitMode ? 0 : 1;
+  if (profitMode) exact.removeAttribute('max');
+  else exact.max = 500;
+  exact.step = profitMode ? 'any' : 1;
+  exact.value = value;
+  const progress = (rangeValue - Number(range.min)) / Math.max(Number.EPSILON, Number(range.max) - Number(range.min)) * 100;
+  range.style.setProperty('--progress', `${progress}%`);
+  $('#target-label').textContent = profitMode ? 'NET PROFIT TARGET' : 'REALIZED ROI TARGET';
+  $('#target-display').textContent = profitMode ? formatFinancial(value) : `${value.toFixed(0)}%`;
+  $('#target-min').textContent = profitMode ? formatFinancial(0) : '1%';
+  $('#target-max').textContent = profitMode ? formatFinancial(maximumProfit) : '500%';
+  $('#target-unit').textContent = profitMode ? 'NET' : '% ROI';
+  range.setAttribute('aria-label', profitMode ? 'Concrete net profit target' : 'ROI target percentage');
+  document.querySelectorAll('[data-target-mode]').forEach(button => {
+    const active = button.dataset.targetMode === targetPlannerState.mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function drawTargetPlannerGraph(sweep) {
+  syncTargetPlannerControls(sweep);
+  const points = sweep.points;
+  const targets = points.map(point => point.probabilityPercent);
+  const selectedIndex = sweepState.selectedIndex;
+  const selected = points[selectedIndex];
+  const result = targetPlannerResult(sweep);
+  const observedAttempts = result.attempts === Infinity
+    ? sweep.gamesPerAgent
+    : Math.min(result.attempts, sweep.gamesPerAgent);
+  const expectedCoverage = points.map(point => chanceWithin(point.probability, result.attempts) * 100);
+  const observedCoverage = points.map(point => {
+    if (observedAttempts <= 0) return 0;
+    const winsInTime = point.firstSuccessCounts
+      .slice(0, observedAttempts)
+      .reduce((sum, count) => sum + count, 0);
+    return winsInTime / sweep.agentCount * 100;
+  });
+  const ninetyLine = points.map(() => 90);
+  drawSweepLine('sweep-calibration-chart', [
+    { values: ninetyLine, color: '#a74d32', dash: [4, 5], width: 1.1, alpha: .65 },
+    { values: observedCoverage, color: '#7f8a82', dash: [5, 5], width: 1.4 },
+    { values: expectedCoverage, color: '#16a05d', width: 2.5 }
+  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%`, xValues: targets });
+
+  const attemptsText = result.attempts === Infinity
+    ? 'NO COST LIMIT'
+    : result.attempts === 0
+      ? 'DO NOT PLAY'
+      : `${result.attempts.toLocaleString()} ATTEMPT${result.attempts === 1 ? '' : 'S'}`;
+  const selectedChance = expectedCoverage[selectedIndex];
+  const targetText = targetPlannerState.mode === 'profit'
+    ? `${formatFinancial(targetPlannerState.profit)} NET`
+    : `${targetPlannerState.roiPercent.toFixed(0)}% ROI`;
+  $('#target-attempts').textContent = attemptsText;
+  $('#target-rule').textContent = targetPlannerState.mode === 'profit'
+    ? 'REWARD − CUMULATIVE COST ≥ TARGET'
+    : `ROI TARGET = ${formatFinancial(result.concreteRoiTarget)} AT THIS DEADLINE`;
+  $('#target-cost').textContent = result.attempts === Infinity ? formatFinancial(0) : formatFinancial(result.cumulativeCost);
+  $('#target-profit').textContent = result.profitAtDeadline === null ? 'IMPOSSIBLE' : formatFinancial(result.profitAtDeadline);
+  $('#target-chance-label').textContent = `CHANCE AT ${formatProbability(selected.probabilityPercent)}`;
+  $('#target-chance').textContent = `${selectedChance.toFixed(2)}%`;
+  $('#sweep-calibration-insight').textContent = `${targetText} · ${attemptsText} · ${formatProbability(selected.probabilityPercent)} → ${selectedChance.toFixed(2)}%`;
+
+  chartModels['sweep-calibration-chart'] = {
+    count: points.length,
+    xValues: targets,
+    describe: index => {
+      const observedNote = result.attempts > sweep.gamesPerAgent || result.attempts === Infinity
+        ? `Observed uses the available ${sweep.gamesPerAgent.toLocaleString()}-game simulation window`
+        : `Observed through attempt ${observedAttempts.toLocaleString()}`;
+      return `<strong>${formatProbability(points[index].probabilityPercent)} ODDS · ${attemptsText}</strong><br>${expectedCoverage[index].toFixed(3)}% theoretical chance of ≥1 win before stopping<br>${observedCoverage[index].toFixed(3)}% observed agent coverage<br>${observedNote}<br>Required return: ${targetText}`;
+    }
+  };
+}
+
 function showSweep(sweep) {
   currentSweep = sweep;
   currentRun = null;
@@ -988,6 +1113,7 @@ function showSweep(sweep) {
   $('#sweep-breakeven').textContent = Number.isFinite(breakEven) ? formatProbability(breakEven) : 'NO FINITE RATE';
   const winningIndex = sweep.points.findIndex(point => point.probabilityPercent === sweep.firstWinningProbabilityPercent);
   sweepState.selectedIndex = winningIndex >= 0 ? winningIndex : sweep.points.length - 1;
+  targetPlannerState.profit = Math.max(0, sweep.winReward * .1);
   updateSweepDecision();
 }
 
@@ -1046,18 +1172,7 @@ function drawSweepAtlas(sweep) {
   const selected = points[selectedIndex];
   const fieldGames = sweep.agentCount * sweep.gamesPerAgent;
   const targets = points.map(point => point.probabilityPercent);
-  const actualRates = points.map(point => point.actualRate * 100);
-  const calibrationErrors = actualRates.map((value, index) => Math.abs(value - targets[index]));
-  drawSweepLine('sweep-calibration-chart', [
-    { values: targets, color: '#7f8a82', dash: [5, 5], width: 1.2 },
-    { values: actualRates, color: '#16a05d', width: 2.3 }
-  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%`, xValues: targets });
-  $('#sweep-calibration-insight').textContent = `MEAN ERROR ${(calibrationErrors.reduce((a, b) => a + b, 0) / points.length).toFixed(3)} PTS`;
-  chartModels['sweep-calibration-chart'] = {
-    count: points.length,
-    xValues: targets,
-    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} TARGET ODDS</strong><br>${actualRates[index].toFixed(3)}% observed rate<br>${points[index].totalSuccesses.toLocaleString()} wins / ${fieldGames.toLocaleString()} games<br>${calibrationErrors[index].toFixed(3)} point calibration gap`
-  };
+  drawTargetPlannerGraph(sweep);
 
   const outcomeChart = getChartContext('sweep-outcomes-chart', true);
   const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['0.1%', '99%']);
@@ -1278,6 +1393,35 @@ $('#jump-winning').addEventListener('click', () => {
   pinnedChart = null;
   chartTooltip.classList.remove('visible');
   updateSweepDecision();
+});
+
+function updateTargetPlanner() {
+  if (!currentSweep) return;
+  pinnedChart = null;
+  chartTooltip.classList.remove('visible');
+  drawTargetPlannerGraph(currentSweep);
+}
+
+document.querySelectorAll('[data-target-mode]').forEach(button => button.addEventListener('click', () => {
+  targetPlannerState.mode = button.dataset.targetMode === 'roi' ? 'roi' : 'profit';
+  updateTargetPlanner();
+}));
+
+$('#target-range').addEventListener('input', event => {
+  const value = Number(event.target.value);
+  if (!Number.isFinite(value)) return;
+  if (targetPlannerState.mode === 'profit') targetPlannerState.profit = Math.max(0, value);
+  else targetPlannerState.roiPercent = Math.max(1, Math.min(500, value));
+  updateTargetPlanner();
+});
+
+$('#target-number').addEventListener('input', event => {
+  if (event.target.value.trim() === '') return;
+  const value = Number(event.target.value);
+  if (!Number.isFinite(value)) return;
+  if (targetPlannerState.mode === 'profit') targetPlannerState.profit = Math.max(0, value);
+  else targetPlannerState.roiPercent = Math.max(1, Math.min(500, value));
+  updateTargetPlanner();
 });
 
 function waitingIndexAt(event) {

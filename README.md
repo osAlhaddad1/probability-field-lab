@@ -5,7 +5,7 @@ A dependency-free Java + JavaScript probability experiment. Each run launches a 
 The dashboard has two modes:
 
 - **Known odds** runs one detailed field at a chosen success probability.
-- **Unknown odds** repeats the complete field 108 times at 0.1%–0.9% and every whole-number probability from 1%–99%, then builds a ten-graph decision atlas around calibration, profit, risk, waiting time, and an automatic move-on boundary.
+- **Unknown odds** repeats the complete field 108 times at 0.1%–0.9% and every whole-number probability from 1%–99%, then builds a ten-graph decision atlas around profit, risk, waiting time, and automatic move-on boundaries. Graph 01 includes an interactive deadline planner for either a concrete net-profit target or a realized ROI target from 1%–500%.
 
 ## Run it
 

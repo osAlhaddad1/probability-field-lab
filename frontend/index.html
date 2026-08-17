@@ -251,10 +251,31 @@
       </section>
 
       <div class="sweep-grid">
-        <article class="sweep-card sweep-wide">
-          <header><span>ATLAS / 01</span><div><h4>Calibration line</h4><p>Did the observed outcomes follow the probability the engine was given?</p></div></header>
-          <canvas id="sweep-calibration-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Observed success rate compared with each target probability"></canvas>
-          <footer>OBSERVED VS TARGET <strong id="sweep-calibration-insight">—</strong></footer>
+        <article class="sweep-card sweep-wide target-planner-card">
+          <header><span>ATLAS / 01</span><div><h4>Profit-target deadline</h4><p>Choose the return you require. The planner calculates the last attempt where one win would still preserve that target.</p></div></header>
+
+          <div class="target-planner" aria-label="Profit target controls">
+            <div class="target-mode" role="group" aria-label="Target type">
+              <button class="active" data-target-mode="profit" aria-pressed="true">CONCRETE WIN</button>
+              <button data-target-mode="roi" aria-pressed="false">ROI %</button>
+            </div>
+            <div class="target-slider-block">
+              <label for="target-range"><span id="target-label">NET PROFIT TARGET</span><strong id="target-display">—</strong></label>
+              <input id="target-range" type="range" min="0" max="100" step="0.2" value="10" aria-label="Concrete net profit target">
+              <div class="target-scale"><span id="target-min">0</span><span id="target-max">—</span></div>
+            </div>
+            <label class="target-exact"><span>EXACT TARGET</span><span><input id="target-number" type="number" min="0" step="any" value="10" aria-label="Exact target value"><i id="target-unit">NET</i></span></label>
+          </div>
+
+          <div class="target-readout" aria-live="polite">
+            <div class="target-primary"><span>STOP AFTER</span><strong id="target-attempts">—</strong><small id="target-rule">—</small></div>
+            <div><span>CUMULATIVE COST</span><strong id="target-cost">—</strong></div>
+            <div><span>PROFIT IF WIN LANDS THERE</span><strong id="target-profit">—</strong></div>
+            <div><span id="target-chance-label">CHANCE AT INSPECTED ODDS</span><strong id="target-chance">—</strong></div>
+          </div>
+
+          <canvas id="sweep-calibration-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Chance of winning before the profit target deadline across probabilities"></canvas>
+          <footer>WIN BEFORE THE DEADLINE <strong id="sweep-calibration-insight">—</strong></footer>
         </article>
 
         <article class="sweep-card sweep-dark">
