@@ -18,8 +18,10 @@ const chartTooltip = $('#chart-tooltip');
 let currentRun = null;
 let currentSweep = null;
 let experimentMode = 'fixed';
-const sweepState = { selectedProbability: 25, confidence: .9 };
+const sweepState = { selectedIndex: 0 };
 const MAX_TOTAL_GAMES = 10000000;
+const SWEEP_PROBABILITY_COUNT = 108;
+const SWEEP_CONFIDENCE = .9;
 let matrixCell = 7;
 const chartModels = {};
 let pinnedChart = null;
@@ -68,11 +70,11 @@ function updateWorkload() {
   const games = integerValue(gameCountInput, 300);
   const gameCost = financialValue(gameCostInput, 1);
   const winReward = financialValue(winRewardInput, 100);
-  const multiplier = experimentMode === 'sweep' ? 99 : 1;
+  const multiplier = experimentMode === 'sweep' ? SWEEP_PROBABILITY_COUNT : 1;
   const total = agents * games * multiplier;
   totalGamesOutput.textContent = Number.isFinite(total) ? total.toLocaleString() : '—';
-  $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 99 FIELDS' : 'TOTAL GAMES';
-  runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 1—99% SWEEP' : 'RUN EXPERIMENT';
+  $('#total-games-label').textContent = experimentMode === 'sweep' ? 'TOTAL GAMES · 108 FIELDS' : 'TOTAL GAMES';
+  runButton.querySelector('.button-label').textContent = experimentMode === 'sweep' ? 'RUN 0.1—99% SWEEP' : 'RUN EXPERIMENT';
   const invalidEconomics = gameCost < 0 || gameCost > 1000000000 || winReward < 0 || winReward > 1000000000;
   const invalid = agents < 1 || agents > 10000 || games < 1 || games > 10000 || total > MAX_TOTAL_GAMES || invalidEconomics;
   workloadWarning.classList.toggle('invalid', invalid);
@@ -81,7 +83,7 @@ function updateWorkload() {
     : invalidEconomics
       ? 'COST AND REWARD MUST BE BETWEEN 0 AND 1,000,000,000'
       : experimentMode === 'sweep'
-        ? '99 PROBABILITIES · MAXIMUM 10,000,000 TOTAL GAMES'
+        ? '108 PROBABILITIES · MAXIMUM 10,000,000 TOTAL GAMES'
         : 'MAXIMUM 10,000,000 TOTAL GAMES';
   runButton.disabled = invalid;
   return { agents, games, gameCost, winReward, total, invalid };
@@ -913,6 +915,12 @@ function attemptBoundary(probability, confidence) {
   return Math.max(1, Math.ceil(Math.log(1 - confidence) / Math.log(1 - probability)));
 }
 
+function formatProbability(probabilityPercent) {
+  return probabilityPercent < 1
+    ? `${probabilityPercent.toFixed(1)}%`
+    : `${Number.isInteger(probabilityPercent) ? probabilityPercent.toFixed(0) : probabilityPercent.toFixed(1)}%`;
+}
+
 function drawSweepLine(id, series, options = {}) {
   const chart = getChartContext(id, options.dark);
   const { ctx, width, pad, ink } = chart;
@@ -921,10 +929,13 @@ function drawSweepLine(id, series, options = {}) {
   let maximum = options.maximum ?? Math.max(1, ...values);
   if (maximum <= minimum) maximum = minimum + 1;
   const ticks = [0, .5, 1].map(ratio => ({ value: minimum + (maximum - minimum) * ratio, ratio }));
-  const xLabels = options.xLabels ?? ['1%', '99%'];
+  const xLabels = options.xLabels ?? ['0.1%', '99%'];
   const { plotWidth, plotHeight } = chartFrame(chart, ticks, options.formatter ?? (value => value.toFixed(1)), xLabels);
   const count = Math.max(1, series[0]?.values.length ?? 1);
-  const x = index => pad.left + index / Math.max(1, count - 1) * plotWidth;
+  const xValues = options.xValues ?? Array.from({ length: count }, (_, index) => index);
+  const minimumX = xValues[0] ?? 0;
+  const maximumX = xValues[xValues.length - 1] ?? Math.max(1, count - 1);
+  const x = index => pad.left + (xValues[index] - minimumX) / Math.max(Number.EPSILON, maximumX - minimumX) * plotWidth;
   const y = value => pad.top + plotHeight * (1 - (value - minimum) / (maximum - minimum));
 
   if (minimum < 0 && maximum > 0) {
@@ -948,7 +959,7 @@ function drawSweepLine(id, series, options = {}) {
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
 
-  const markerIndex = Math.max(0, Math.min(count - 1, options.markerIndex ?? sweepState.selectedProbability - 1));
+  const markerIndex = Math.max(0, Math.min(count - 1, options.markerIndex ?? sweepState.selectedIndex));
   ctx.strokeStyle = options.markerColor ?? (options.dark ? '#fbfbf7' : ink);
   ctx.globalAlpha = .42;
   ctx.setLineDash([3, 4]);
@@ -970,49 +981,67 @@ function showSweep(sweep) {
   resultsSection.classList.add('hidden');
   sweepResultsSection.classList.remove('hidden');
   $('#sweep-total').textContent = sweep.totalGames.toLocaleString();
+  $('#sweep-probability-count').textContent = sweep.probabilityCount.toLocaleString();
   $('#sweep-duration').textContent = `${sweep.durationMs} ms`;
-  const breakEven = sweep.winReward > 0 ? sweep.gameCost / sweep.winReward * 100 : sweep.gameCost === 0 ? 0 : Infinity;
-  $('#sweep-breakeven').textContent = Number.isFinite(breakEven) ? `${breakEven.toFixed(3)}%` : 'NO FINITE RATE';
+  const breakEven = sweep.breakEvenProbabilityPercent;
+  $('#sweep-breakeven').textContent = Number.isFinite(breakEven) ? formatProbability(breakEven) : 'NO FINITE RATE';
+  const winningIndex = sweep.points.findIndex(point => point.probabilityPercent === sweep.firstWinningProbabilityPercent);
+  sweepState.selectedIndex = winningIndex >= 0 ? winningIndex : sweep.points.length - 1;
   updateSweepDecision();
 }
 
 function updateSweepDecision() {
   if (!currentSweep) return;
-  const probabilityPercent = sweepState.selectedProbability;
-  const probability = probabilityPercent / 100;
-  const boundary = attemptBoundary(probability, sweepState.confidence);
+  const points = currentSweep.points;
+  sweepState.selectedIndex = Math.max(0, Math.min(points.length - 1, sweepState.selectedIndex));
+  const inspected = points[sweepState.selectedIndex];
+  const winningProbabilityPercent = currentSweep.firstWinningProbabilityPercent;
+  const boundary = currentSweep.recommendedAttempts90;
+  const winningPoint = points.find(point => point.probabilityPercent === winningProbabilityPercent);
+  const hasWinningOdds = winningPoint && Number.isFinite(boundary);
+  const slider = $('#sweep-probability');
+  slider.max = Math.max(0, points.length - 1);
+  slider.value = sweepState.selectedIndex;
+  slider.style.setProperty('--progress', `${sweepState.selectedIndex / Math.max(1, points.length - 1) * 100}%`);
+  $('#selected-probability').textContent = formatProbability(inspected.probabilityPercent);
+  $('#jump-winning').disabled = !hasWinningOdds;
+
+  if (!hasWinningOdds) {
+    $('#decision-attempt').textContent = 'DO NOT PLAY';
+    $('#decision-confidence-copy').textContent = 'NO TESTED ODDS HAVE POSITIVE EXPECTED VALUE';
+    $('#decision-winning-probability').textContent = 'NONE ≤99%';
+    $('#decision-spend').textContent = formatFinancial(0);
+    const marginalOutput = $('#decision-marginal');
+    const bestValue = .99 * currentSweep.winReward - currentSweep.gameCost;
+    marginalOutput.textContent = `${bestValue >= 0 ? '+' : ''}${formatFinancial(bestValue)}`;
+    marginalOutput.className = bestValue >= 0 ? 'positive' : 'negative';
+    $('#decision-summary').textContent = `Even at 99%, reward × probability − cost is not positive. Under this rule, the rational move-on boundary is zero attempts: choose a different game.`;
+    drawSweepAtlas(currentSweep);
+    return;
+  }
+
+  const probability = winningPoint.probability;
   const withinLimit = boundary <= currentSweep.gamesPerAgent;
+  const confidenceReached = (1 - Math.pow(1 - probability, boundary)) * 100;
   const chanceAtLimit = (1 - Math.pow(1 - probability, currentSweep.gamesPerAgent)) * 100;
-  const confidenceReached = (1 - Math.pow(1 - probability, Math.min(boundary, currentSweep.gamesPerAgent))) * 100;
   const maximumSpend = boundary * currentSweep.gameCost;
   const marginalValue = probability * currentSweep.winReward - currentSweep.gameCost;
-  const slider = $('#sweep-probability');
-  slider.value = probabilityPercent;
-  slider.style.setProperty('--progress', `${probabilityPercent}%`);
-  $('#selected-probability').textContent = `${probabilityPercent}%`;
-  $('#decision-attempt').textContent = withinLimit ? `${boundary} ATTEMPT${boundary === 1 ? '' : 'S'}` : `>${currentSweep.gamesPerAgent} ATTEMPTS`;
+  $('#decision-attempt').textContent = `${boundary} ATTEMPT${boundary === 1 ? '' : 'S'}`;
   $('#decision-confidence-copy').textContent = withinLimit
     ? `${confidenceReached.toFixed(2)}% CHANCE OF ≥1 WIN`
-    : `TARGET NEEDS ${boundary}; CURRENT LIMIT REACHES ${chanceAtLimit.toFixed(2)}%`;
+    : `REQUIRES ${boundary}; ${currentSweep.gamesPerAgent} ATTEMPTS REACH ${chanceAtLimit.toFixed(2)}%`;
+  $('#decision-winning-probability').textContent = formatProbability(winningProbabilityPercent);
   $('#decision-spend').textContent = formatFinancial(maximumSpend);
   const marginalOutput = $('#decision-marginal');
   marginalOutput.textContent = `${marginalValue >= 0 ? '+' : ''}${formatFinancial(marginalValue)}`;
   marginalOutput.className = marginalValue >= 0 ? 'positive' : 'negative';
-  const valueSentence = marginalValue >= 0
-    ? `Each additional independent try has positive expected value of ${formatFinancial(marginalValue)}.`
-    : `Each additional independent try has negative expected value of ${formatFinancial(marginalValue)}.`;
-  $('#decision-summary').textContent = `${probabilityPercent}% remains ${probabilityPercent}% after every miss. ${withinLimit ? `Attempt ${boundary} reaches your ${(sweepState.confidence * 100).toFixed(0)}% confidence target.` : `The current ${currentSweep.gamesPerAgent}-attempt limit cannot reach your ${(sweepState.confidence * 100).toFixed(0)}% target.`} ${valueSentence}`;
-  document.querySelectorAll('[data-confidence]').forEach(button => {
-    const active = Number(button.dataset.confidence) === sweepState.confidence;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
+  $('#decision-summary').textContent = `Expected value first becomes positive at ${formatProbability(winningProbabilityPercent)}. At those odds, ${boundary} attempts give a ${confidenceReached.toFixed(2)}% chance of at least one win. If all ${boundary} miss, move on—each independent next try still remains ${formatProbability(winningProbabilityPercent)}.`;
   drawSweepAtlas(currentSweep);
 }
 
 function drawSweepAtlas(sweep) {
   const points = sweep.points;
-  const selectedIndex = sweepState.selectedProbability - 1;
+  const selectedIndex = sweepState.selectedIndex;
   const selected = points[selectedIndex];
   const fieldGames = sweep.agentCount * sweep.gamesPerAgent;
   const targets = points.map(point => point.probabilityPercent);
@@ -1021,29 +1050,32 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-calibration-chart', [
     { values: targets, color: '#7f8a82', dash: [5, 5], width: 1.2 },
     { values: actualRates, color: '#16a05d', width: 2.3 }
-  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%` });
-  $('#sweep-calibration-insight').textContent = `MEAN ERROR ${(calibrationErrors.reduce((a, b) => a + b, 0) / 99).toFixed(3)} PTS`;
+  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%`, xValues: targets });
+  $('#sweep-calibration-insight').textContent = `MEAN ERROR ${(calibrationErrors.reduce((a, b) => a + b, 0) / points.length).toFixed(3)} PTS`;
   chartModels['sweep-calibration-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% TARGET ODDS</strong><br>${actualRates[index].toFixed(3)}% observed rate<br>${points[index].totalSuccesses.toLocaleString()} wins / ${fieldGames.toLocaleString()} games<br>${calibrationErrors[index].toFixed(3)} point calibration gap`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} TARGET ODDS</strong><br>${actualRates[index].toFixed(3)}% observed rate<br>${points[index].totalSuccesses.toLocaleString()} wins / ${fieldGames.toLocaleString()} games<br>${calibrationErrors[index].toFixed(3)} point calibration gap`
   };
 
   const outcomeChart = getChartContext('sweep-outcomes-chart', true);
-  const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['1%', '99%']);
-  const outcomeSlot = outcomeFrame.plotWidth / 99;
+  const outcomeFrame = chartFrame(outcomeChart, [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio })), value => `${value.toFixed(0)}%`, ['0.1%', '99%']);
+  const outcomeX = value => outcomeChart.pad.left + (value - targets[0]) / (targets[targets.length - 1] - targets[0]) * outcomeFrame.plotWidth;
+  const outcomeWidth = Math.max(1, outcomeFrame.plotWidth / 100 * .78);
   points.forEach((point, index) => {
     const successHeight = point.actualRate * outcomeFrame.plotHeight;
     outcomeChart.ctx.fillStyle = index === selectedIndex ? '#fbfbf7' : '#d6f25c';
     outcomeChart.ctx.globalAlpha = index === selectedIndex ? 1 : .78;
-    outcomeChart.ctx.fillRect(outcomeChart.pad.left + index * outcomeSlot, outcomeChart.pad.top + outcomeFrame.plotHeight - successHeight, Math.max(1, outcomeSlot), successHeight);
+    outcomeChart.ctx.fillRect(outcomeX(point.probabilityPercent) - outcomeWidth / 2, outcomeChart.pad.top + outcomeFrame.plotHeight - successHeight, outcomeWidth, successHeight);
     outcomeChart.ctx.fillStyle = '#435249';
-    outcomeChart.ctx.fillRect(outcomeChart.pad.left + index * outcomeSlot, outcomeChart.pad.top, Math.max(1, outcomeSlot), outcomeFrame.plotHeight - successHeight);
+    outcomeChart.ctx.fillRect(outcomeX(point.probabilityPercent) - outcomeWidth / 2, outcomeChart.pad.top, outcomeWidth, outcomeFrame.plotHeight - successHeight);
   });
   outcomeChart.ctx.globalAlpha = 1;
-  $('#sweep-outcomes-insight').textContent = `${selected.probabilityPercent}% → ${selected.totalSuccesses.toLocaleString()} W / ${selected.totalFailures.toLocaleString()} L`;
+  $('#sweep-outcomes-insight').textContent = `${formatProbability(selected.probabilityPercent)} → ${selected.totalSuccesses.toLocaleString()} W / ${selected.totalFailures.toLocaleString()} L`;
   chartModels['sweep-outcomes-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].totalSuccesses.toLocaleString()} wins · ${points[index].totalFailures.toLocaleString()} losses<br>${(points[index].actualRate * 100).toFixed(3)}% / ${(100 - points[index].actualRate * 100).toFixed(3)}% split`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${points[index].totalSuccesses.toLocaleString()} wins · ${points[index].totalFailures.toLocaleString()} losses<br>${(points[index].actualRate * 100).toFixed(3)}% / ${(100 - points[index].actualRate * 100).toFixed(3)}% split`
   };
 
   const expectedNet = points.map(point => fieldGames * (point.probability * sweep.winReward - sweep.gameCost));
@@ -1051,12 +1083,13 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-profit-chart', [
     { values: expectedNet, color: '#7f8a82', dash: [5, 5], width: 1.2 },
     { values: observedNet, color: '#16a05d', width: 2.2 }
-  ], { formatter: value => formatFinancial(value, 1) });
-  const breakEven = sweep.winReward > 0 ? sweep.gameCost / sweep.winReward * 100 : Infinity;
+  ], { formatter: value => formatFinancial(value, 1), xValues: targets });
+  const breakEven = sweep.breakEvenProbabilityPercent;
   $('#sweep-profit-insight').textContent = Number.isFinite(breakEven) ? `BREAK-EVEN ${breakEven.toFixed(3)}%` : 'NO FINITE BREAK-EVEN';
   chartModels['sweep-profit-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>Observed net: ${observedNet[index] >= 0 ? '+' : ''}${formatFinancial(observedNet[index])}<br>Expected net: ${expectedNet[index] >= 0 ? '+' : ''}${formatFinancial(expectedNet[index])}<br>${points[index].probabilityPercent >= breakEven ? 'Above' : 'Below'} break-even`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>Observed net: ${observedNet[index] >= 0 ? '+' : ''}${formatFinancial(observedNet[index])}<br>Expected net: ${expectedNet[index] >= 0 ? '+' : ''}${formatFinancial(expectedNet[index])}<br>${points[index].probabilityPercent > breakEven ? 'Above' : 'At or below'} break-even`
   };
 
   const observedCoverage = points.map(point => point.agentsWithSuccess / sweep.agentCount * 100);
@@ -1064,32 +1097,35 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-coverage-chart', [
     { values: expectedCoverage, color: '#7f8a82', dash: [5, 5], width: 1.2 },
     { values: observedCoverage, color: '#16a05d', width: 2.2 }
-  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%` });
-  $('#sweep-coverage-insight').textContent = `${selected.probabilityPercent}% → ${observedCoverage[selectedIndex].toFixed(2)}% COVERED`;
+  ], { minimum: 0, maximum: 100, formatter: value => `${value.toFixed(0)}%`, xValues: targets });
+  $('#sweep-coverage-insight').textContent = `${formatProbability(selected.probabilityPercent)} → ${observedCoverage[selectedIndex].toFixed(2)}% COVERED`;
   chartModels['sweep-coverage-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].agentsWithSuccess.toLocaleString()} / ${sweep.agentCount.toLocaleString()} agents won at least once<br>${observedCoverage[index].toFixed(2)}% observed · ${expectedCoverage[index].toFixed(2)}% expected`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${points[index].agentsWithSuccess.toLocaleString()} / ${sweep.agentCount.toLocaleString()} agents won at least once<br>${observedCoverage[index].toFixed(2)}% observed · ${expectedCoverage[index].toFixed(2)}% expected`
   };
 
-  const boundaries = points.map(point => attemptBoundary(point.probability, sweepState.confidence));
+  const boundaries = points.map(point => attemptBoundary(point.probability, SWEEP_CONFIDENCE));
   const maxBoundary = Math.max(sweep.gamesPerAgent, ...boundaries);
   drawSweepLine('sweep-stop-chart', [{ values: boundaries, color: '#14251d', width: 2.3 }], {
-    minimum: 0, maximum: maxBoundary, formatter: value => `${Math.round(value)}×`, markerColor: '#14251d'
+    minimum: 0, maximum: maxBoundary, formatter: value => `${Math.round(value)}×`, markerColor: '#14251d', xValues: targets
   });
-  $('#sweep-stop-insight').textContent = `${(sweepState.confidence * 100).toFixed(0)}% TARGET · ${selected.probabilityPercent}% NEEDS ${boundaries[selectedIndex]}`;
+  $('#sweep-stop-insight').textContent = `90% TARGET · ${formatProbability(selected.probabilityPercent)} NEEDS ${boundaries[selectedIndex]}`;
   chartModels['sweep-stop-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${boundaries[index]} attempts for ≥${(sweepState.confidence * 100).toFixed(0)}% chance of one win<br>${boundaries[index] <= sweep.gamesPerAgent ? 'Inside' : 'Beyond'} the ${sweep.gamesPerAgent}-game limit<br>${points[index].probabilityPercent}% chance remains on every next try`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${boundaries[index]} attempts for ≥90% chance of one win<br>${boundaries[index] <= sweep.gamesPerAgent ? 'Inside' : 'Beyond'} the ${sweep.gamesPerAgent}-game limit<br>${formatProbability(points[index].probabilityPercent)} chance remains on every next try`
   };
 
   const confidenceCosts = boundaries.map(boundary => boundary * sweep.gameCost);
   drawSweepLine('sweep-cost-chart', [{ values: confidenceCosts, color: '#16a05d', width: 2.3 }], {
-    minimum: 0, formatter: value => formatFinancial(value, 1)
+    minimum: 0, formatter: value => formatFinancial(value, 1), xValues: targets
   });
-  $('#sweep-cost-insight').textContent = `${selected.probabilityPercent}% → ${formatFinancial(confidenceCosts[selectedIndex])} MAX SPEND`;
+  $('#sweep-cost-insight').textContent = `${formatProbability(selected.probabilityPercent)} → ${formatFinancial(confidenceCosts[selectedIndex])} MAX SPEND`;
   chartModels['sweep-cost-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${formatFinancial(confidenceCosts[index])} maximum spend to the confidence boundary<br>${boundaries[index]} attempts × ${formatFinancial(sweep.gameCost)} per attempt`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${formatFinancial(confidenceCosts[index])} maximum spend to the 90% boundary<br>${boundaries[index]} attempts × ${formatFinancial(sweep.gameCost)} per attempt`
   };
 
   const waitMedian = points.map(point => point.medianFirstSuccess);
@@ -1097,11 +1133,12 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-wait-chart', [
     { values: waitP90, color: '#65736a', dash: [5, 5], width: 1.4 },
     { values: waitMedian, color: '#d6f25c', width: 2.3 }
-  ], { dark: true, minimum: 0, maximum: sweep.gamesPerAgent + 1, formatter: value => `${Math.round(value)}G` });
-  $('#sweep-wait-insight').textContent = `${selected.probabilityPercent}% → P50 ${waitMedian[selectedIndex]} / P90 ${waitP90[selectedIndex]}`;
+  ], { dark: true, minimum: 0, maximum: sweep.gamesPerAgent + 1, formatter: value => `${Math.round(value)}G`, xValues: targets });
+  $('#sweep-wait-insight').textContent = `${formatProbability(selected.probabilityPercent)} → P50 ${waitMedian[selectedIndex]} / P90 ${waitP90[selectedIndex]}`;
   chartModels['sweep-wait-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>Median first win: ${waitMedian[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitMedian[index]}`}<br>90th percentile: ${waitP90[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitP90[index]}`}<br>Average among winners: ${points[index].averageFirstSuccess.toFixed(2)} games`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>Median first win: ${waitMedian[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitMedian[index]}`}<br>90th percentile: ${waitP90[index] > sweep.gamesPerAgent ? 'beyond limit' : `game ${waitP90[index]}`}<br>Average among winners: ${points[index].averageFirstSuccess.toFixed(2)} games`
   };
 
   const observedZero = points.map(point => point.agentsWithoutSuccess / sweep.agentCount * 100);
@@ -1109,11 +1146,12 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-zero-chart', [
     { values: expectedZero, color: '#7f8a82', dash: [5, 5], width: 1.2 },
     { values: observedZero, color: '#a74d32', width: 2.2 }
-  ], { minimum: 0, maximum: Math.max(1, expectedZero[0], observedZero[0]), formatter: value => `${value.toFixed(1)}%` });
-  $('#sweep-zero-insight').textContent = `${selected.probabilityPercent}% → ${observedZero[selectedIndex].toFixed(2)}% NEVER WON`;
+  ], { minimum: 0, maximum: Math.max(1, expectedZero[0], observedZero[0]), formatter: value => `${value.toFixed(1)}%`, xValues: targets });
+  $('#sweep-zero-insight').textContent = `${formatProbability(selected.probabilityPercent)} → ${observedZero[selectedIndex].toFixed(2)}% NEVER WON`;
   chartModels['sweep-zero-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${points[index].agentsWithoutSuccess} agents never won<br>${observedZero[index].toFixed(3)}% observed zero-win risk<br>${expectedZero[index].toFixed(3)}% theoretical risk`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${points[index].agentsWithoutSuccess} agents never won<br>${observedZero[index].toFixed(3)}% observed zero-win risk<br>${expectedZero[index].toFixed(3)}% theoretical risk`
   };
 
   const observedVolatility = points.map(point => point.successStdDev);
@@ -1121,11 +1159,12 @@ function drawSweepAtlas(sweep) {
   drawSweepLine('sweep-volatility-chart', [
     { values: expectedVolatility, color: '#7f8a82', dash: [5, 5], width: 1.2 },
     { values: observedVolatility, color: '#16a05d', width: 2.2 }
-  ], { minimum: 0, formatter: value => value.toFixed(1) });
+  ], { minimum: 0, formatter: value => value.toFixed(1), xValues: targets });
   $('#sweep-volatility-insight').textContent = `PEAK SPREAD ${Math.max(...observedVolatility).toFixed(2)} WINS`;
   chartModels['sweep-volatility-chart'] = {
-    count: 99,
-    describe: index => `<strong>${points[index].probabilityPercent}% PROBABILITY</strong><br>${observedVolatility[index].toFixed(3)} observed win-count deviation<br>${expectedVolatility[index].toFixed(3)} theoretical deviation<br>${points[index].averageSuccessesPerAgent.toFixed(2)} average wins per agent`
+    count: points.length,
+    xValues: targets,
+    describe: index => `<strong>${formatProbability(points[index].probabilityPercent)} PROBABILITY</strong><br>${observedVolatility[index].toFixed(3)} observed win-count deviation<br>${expectedVolatility[index].toFixed(3)} theoretical deviation<br>${points[index].averageSuccessesPerAgent.toFixed(2)} average wins per agent`
   };
 
   drawSweepDecisionCurve(sweep, selected);
@@ -1141,7 +1180,7 @@ function drawSweepDecisionCurve(sweep, point) {
   });
   const expectedCoverage = Array.from({ length: sweep.gamesPerAgent }, (_, index) => (1 - Math.pow(1 - probability, index + 1)) * 100);
   const missRisk = expectedCoverage.map(value => 100 - value);
-  const boundary = attemptBoundary(probability, sweepState.confidence);
+  const boundary = attemptBoundary(probability, SWEEP_CONFIDENCE);
   const markerIndex = Math.min(sweep.gamesPerAgent - 1, boundary - 1);
   drawSweepLine('sweep-decision-chart', [
     { values: missRisk, color: '#a74d32', dash: [5, 5], width: 1.3 },
@@ -1155,25 +1194,34 @@ function drawSweepDecisionCurve(sweep, point) {
     markerIndex
   });
   $('#sweep-decision-insight').textContent = boundary <= sweep.gamesPerAgent
-    ? `${point.probabilityPercent}% · MOVE-ON BOUNDARY ${boundary}`
-    : `${point.probabilityPercent}% · TARGET BEYOND ${sweep.gamesPerAgent}`;
+    ? `${formatProbability(point.probabilityPercent)} · 90% BOUNDARY ${boundary}`
+    : `${formatProbability(point.probabilityPercent)} · 90% TARGET BEYOND ${sweep.gamesPerAgent}`;
   chartModels['sweep-decision-chart'] = {
     count: sweep.gamesPerAgent,
     describe: index => {
       const attempt = index + 1;
-      return `<strong>ATTEMPT ${attempt} · ${point.probabilityPercent}% ODDS</strong><br>${observedCoverage[index].toFixed(2)}% observed agents have won<br>${expectedCoverage[index].toFixed(2)}% expected chance of ≥1 win<br>${missRisk[index].toFixed(2)}% chance still waiting<br>${formatFinancial(attempt * sweep.gameCost)} maximum spend`;
+      return `<strong>ATTEMPT ${attempt} · ${formatProbability(point.probabilityPercent)} ODDS</strong><br>${observedCoverage[index].toFixed(2)}% observed agents have won<br>${expectedCoverage[index].toFixed(2)}% expected chance of ≥1 win<br>${missRisk[index].toFixed(2)}% chance still waiting<br>${formatFinancial(attempt * sweep.gameCost)} maximum spend`;
     }
   };
 }
 
-function chartIndexAt(canvas, event, count) {
+function chartIndexAt(canvas, event, model) {
   const rect = canvas.getBoundingClientRect();
   const plotLeft = 43;
   const plotRight = rect.width - 13;
   const x = event.clientX - rect.left;
   if (x < plotLeft || x > plotRight) return -1;
   const ratio = Math.min(.999999, Math.max(0, (x - plotLeft) / Math.max(1, plotRight - plotLeft)));
-  return Math.min(count - 1, Math.floor(ratio * count));
+  if (model.xValues?.length) {
+    const values = model.xValues;
+    const target = values[0] + ratio * (values[values.length - 1] - values[0]);
+    let closest = 0;
+    for (let index = 1; index < values.length; index++) {
+      if (Math.abs(values[index] - target) < Math.abs(values[closest] - target)) closest = index;
+    }
+    return closest;
+  }
+  return Math.min(model.count - 1, Math.floor(ratio * model.count));
 }
 
 function showChartTooltip(canvas, event, index, pinned = false) {
@@ -1191,17 +1239,17 @@ document.querySelectorAll('.data-chart:not(#first-success-chart)').forEach(canva
   canvas.addEventListener('pointermove', event => {
     const model = chartModels[canvas.id];
     if (!model) return;
-    const index = chartIndexAt(canvas, event, model.count);
+    const index = chartIndexAt(canvas, event, model);
     if (index >= 0) showChartTooltip(canvas, event, index, pinnedChart?.id === canvas.id && pinnedChart.index === index);
     else if (!pinnedChart) chartTooltip.classList.remove('visible');
   });
   canvas.addEventListener('click', event => {
     const model = chartModels[canvas.id];
     if (!model) return;
-    const index = chartIndexAt(canvas, event, model.count);
+    const index = chartIndexAt(canvas, event, model);
     if (index < 0) return;
     if (currentSweep && canvas.classList.contains('sweep-selectable')) {
-      sweepState.selectedProbability = index + 1;
+      sweepState.selectedIndex = index;
       updateSweepDecision();
     }
     const samePoint = pinnedChart?.id === canvas.id && pinnedChart.index === index;
@@ -1215,18 +1263,21 @@ document.querySelectorAll('.data-chart:not(#first-success-chart)').forEach(canva
 });
 
 $('#sweep-probability').addEventListener('input', event => {
-  sweepState.selectedProbability = Number(event.target.value);
+  sweepState.selectedIndex = Number(event.target.value);
   pinnedChart = null;
   chartTooltip.classList.remove('visible');
   updateSweepDecision();
 });
 
-document.querySelectorAll('[data-confidence]').forEach(button => button.addEventListener('click', () => {
-  sweepState.confidence = Number(button.dataset.confidence);
+$('#jump-winning').addEventListener('click', () => {
+  if (!currentSweep) return;
+  const winningIndex = currentSweep.points.findIndex(point => point.probabilityPercent === currentSweep.firstWinningProbabilityPercent);
+  if (winningIndex < 0) return;
+  sweepState.selectedIndex = winningIndex;
   pinnedChart = null;
   chartTooltip.classList.remove('visible');
   updateSweepDecision();
-}));
+});
 
 function waitingIndexAt(event) {
   if (!waitingData) return -1;

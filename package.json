@@ -2,7 +2,7 @@
   "name": "probability-field-lab",
   "version": "1.0.0",
   "private": true,
-  "description": "A concurrent probability experiment and 1–99% decision atlas with a Java API and JavaScript dashboard.",
+  "description": "A concurrent probability experiment and 0.1–99% decision atlas with a Java API and JavaScript dashboard.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",

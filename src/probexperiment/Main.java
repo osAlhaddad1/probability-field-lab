@@ -36,7 +36,7 @@ public final class Main {
     private static final int MAX_AGENT_COUNT = 10_000;
     private static final int MAX_GAMES_PER_AGENT = 10_000;
     private static final int MAX_TOTAL_GAMES = 10_000_000;
-    private static final int SWEEP_PROBABILITY_COUNT = 99;
+    private static final int SWEEP_PROBABILITY_COUNT = 108;
     private static final Pattern SUCCESS_RATE = Pattern.compile("\\\"successRate\\\"\\s*:\\s*([0-9.eE+-]+)");
     private static final Pattern SEED = Pattern.compile("\\\"seed\\\"\\s*:\\s*(-?[0-9]+)");
     private static final Pattern AGENT_COUNT_INPUT = Pattern.compile("\\\"agentCount\\\"\\s*:\\s*([0-9]+)");
@@ -201,7 +201,7 @@ public final class Main {
                 int gamesPerAgent = (int) requestedGames;
                 long totalGames = (long) SWEEP_PROBABILITY_COUNT * agentCount * gamesPerAgent;
                 if (totalGames > MAX_TOTAL_GAMES) {
-                    sendJson(exchange, 400, "{\"error\":\"The 99-probability sweep is limited to " + MAX_TOTAL_GAMES + " total games\"}");
+                    sendJson(exchange, 400, "{\"error\":\"The 108-probability sweep is limited to " + MAX_TOTAL_GAMES + " total games\"}");
                     return;
                 }
                 double gameCost = findDouble(GAME_COST_INPUT, body, 1.0);
@@ -281,25 +281,29 @@ public final class Main {
                                  double gameCost, double winReward) throws Exception {
         long started = System.nanoTime();
         List<Callable<SweepPoint>> tasks = new ArrayList<>(SWEEP_PROBABILITY_COUNT);
-        for (int probabilityPercent = 1; probabilityPercent <= SWEEP_PROBABILITY_COUNT; probabilityPercent++) {
-            final int percent = probabilityPercent;
-            tasks.add(() -> runSweepPoint(percent, mixSeed(seed, percent * 1_000_003), agentCount, gamesPerAgent));
+        for (int probabilityTenths = 1; probabilityTenths <= 9; probabilityTenths++) {
+            final int tenths = probabilityTenths;
+            tasks.add(() -> runSweepPoint(tenths, mixSeed(seed, tenths * 1_000_003), agentCount, gamesPerAgent));
+        }
+        for (int probabilityPercent = 1; probabilityPercent <= 99; probabilityPercent++) {
+            final int tenths = probabilityPercent * 10;
+            tasks.add(() -> runSweepPoint(tenths, mixSeed(seed, tenths * 1_000_003), agentCount, gamesPerAgent));
         }
 
         List<SweepPoint> points = new ArrayList<>(SWEEP_PROBABILITY_COUNT);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (var future : executor.invokeAll(tasks)) points.add(future.get());
         }
-        points.sort(Comparator.comparingInt(SweepPoint::probabilityPercent));
+        points.sort(Comparator.comparingInt(SweepPoint::probabilityTenths));
         long durationMs = Math.max(1, (System.nanoTime() - started) / 1_000_000);
         String id = Instant.now().toEpochMilli() + "-" + UUID.randomUUID().toString().substring(0, 8);
         return new SweepResult(id, Instant.now().toString(), seed, durationMs, agentCount,
                 gamesPerAgent, gameCost, winReward, points);
     }
 
-    private SweepPoint runSweepPoint(int probabilityPercent, long probabilitySeed,
+    private SweepPoint runSweepPoint(int probabilityTenths, long probabilitySeed,
                                      int agentCount, int gamesPerAgent) {
-        double probability = probabilityPercent / 100.0;
+        double probability = probabilityTenths / 1_000.0;
         int[] firstSuccessCounts = new int[gamesPerAgent];
         long totalSuccesses = 0;
         long successSquares = 0;
@@ -331,7 +335,7 @@ public final class Main {
         double averageFirstSuccess = agentsWithSuccess == 0 ? 0 : firstSuccessSum / (double) agentsWithSuccess;
         int medianFirstSuccess = waitPercentile(firstSuccessCounts, agentsWithoutSuccess, agentCount, .5, gamesPerAgent);
         int p90FirstSuccess = waitPercentile(firstSuccessCounts, agentsWithoutSuccess, agentCount, .9, gamesPerAgent);
-        return new SweepPoint(probabilityPercent, totalSuccesses, agentsWithSuccess, agentsWithoutSuccess,
+        return new SweepPoint(probabilityTenths, totalSuccesses, agentsWithSuccess, agentsWithoutSuccess,
                 averageSuccesses, Math.sqrt(variance), averageFirstSuccess, medianFirstSuccess,
                 p90FirstSuccess, firstSuccessCounts);
     }
@@ -510,7 +514,7 @@ public final class Main {
     }
 
     private record SweepPoint(
-            int probabilityPercent,
+            int probabilityTenths,
             long totalSuccesses,
             int agentsWithSuccess,
             int agentsWithoutSuccess,
@@ -526,9 +530,11 @@ public final class Main {
             long failures = totalGames - totalSuccesses;
             double actualRate = totalSuccesses / (double) totalGames;
             double observedNet = totalSuccesses * winReward - totalGames * gameCost;
+            double probabilityPercent = probabilityTenths / 10.0;
+            double probability = probabilityTenths / 1_000.0;
             StringBuilder json = new StringBuilder(256 + firstSuccessCounts.length * 3);
             json.append("{\"probabilityPercent\":").append(probabilityPercent).append(',')
-                    .append("\"probability\":").append(probabilityPercent / 100.0).append(',')
+                    .append("\"probability\":").append(probability).append(',')
                     .append("\"totalSuccesses\":").append(totalSuccesses).append(',')
                     .append("\"totalFailures\":").append(failures).append(',')
                     .append("\"actualRate\":").append(actualRate).append(',')
@@ -562,6 +568,16 @@ public final class Main {
     ) {
         String toJson() {
             long totalGames = (long) SWEEP_PROBABILITY_COUNT * agentCount * gamesPerAgent;
+            Double firstWinningProbabilityPercent = null;
+            Integer recommendedAttempts90 = null;
+            for (SweepPoint point : points) {
+                double probability = point.probabilityTenths() / 1_000.0;
+                if (probability * winReward - gameCost > 1e-12) {
+                    firstWinningProbabilityPercent = point.probabilityTenths() / 10.0;
+                    recommendedAttempts90 = Math.max(1, (int) Math.ceil(Math.log(0.1) / Math.log(1 - probability)));
+                    break;
+                }
+            }
             StringBuilder json = new StringBuilder(120_000);
             json.append("{\"id\":\"").append(id).append("\",")
                     .append("\"createdAt\":\"").append(createdAt).append("\",")
@@ -573,6 +589,15 @@ public final class Main {
                     .append("\"winReward\":").append(winReward).append(',')
                     .append("\"probabilityCount\":").append(SWEEP_PROBABILITY_COUNT).append(',')
                     .append("\"totalGames\":").append(totalGames).append(',')
+                    .append("\"breakEvenProbabilityPercent\":");
+            if (winReward > 0) json.append(gameCost / winReward * 100);
+            else if (gameCost == 0) json.append(0);
+            else json.append("null");
+            json.append(',')
+                    .append("\"firstWinningProbabilityPercent\":")
+                    .append(firstWinningProbabilityPercent == null ? "null" : firstWinningProbabilityPercent).append(',')
+                    .append("\"recommendedAttempts90\":")
+                    .append(recommendedAttempts90 == null ? "null" : recommendedAttempts90).append(',')
                     .append("\"points\":[");
             for (int i = 0; i < points.size(); i++) {
                 if (i > 0) json.append(',');

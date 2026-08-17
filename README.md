@@ -5,7 +5,7 @@ A dependency-free Java + JavaScript probability experiment. Each run launches a 
 The dashboard has two modes:
 
 - **Known odds** runs one detailed field at a chosen success probability.
-- **Unknown odds** repeats the complete field 99 times at every probability from 1% through 99%, then builds a ten-graph decision atlas around calibration, profit, risk, waiting time, and a configurable move-on boundary.
+- **Unknown odds** repeats the complete field 108 times at 0.1%–0.9% and every whole-number probability from 1%–99%, then builds a ten-graph decision atlas around calibration, profit, risk, waiting time, and an automatic move-on boundary.
 
 ## Run it
 
@@ -29,7 +29,7 @@ Detailed experiments are stored as JSON under `data/runs/`. Probability sweeps a
 - run timestamp and compute duration.
 - cost per game, reward per win, and derived profit/loss analysis.
 
-The detailed mode can export its complete result matrix as CSV. The UI accepts 1–10,000 agents and 1–10,000 games per agent, with a limit of 10,000,000 total games per request. A sweep counts all 99 probability fields toward that limit. Large matrices automatically switch to a compact raster renderer.
+The detailed mode can export its complete result matrix as CSV. The UI accepts 1–10,000 agents and 1–10,000 games per agent, with a limit of 10,000,000 total games per request. A sweep counts all 108 probability fields toward that limit. Large matrices automatically switch to a compact raster renderer.
 
 The visible archive has intentionally been removed from the streamlined interface. The API continues to preserve generated data on disk.
 
@@ -39,7 +39,7 @@ The visible archive has intentionally been removed from the streamlined interfac
 - `GET /api/runs` lists saved runs.
 - `GET /api/runs/{id}` returns one complete run.
 - `DELETE /api/runs/{id}` removes a run from the archive and moves its JSON file to `data/trash/`.
-- `POST /api/sweeps` with `{ "agentCount": 200, "gamesPerAgent": 300, "gameCost": 1, "winReward": 100 }` runs and saves all 99 probability fields.
+- `POST /api/sweeps` with `{ "agentCount": 200, "gamesPerAgent": 300, "gameCost": 1, "winReward": 100 }` runs and saves all 108 probability fields. It returns the first tested probability where `probability × reward − cost > 0` and the smallest attempt count where `1 − (1 − probability)^attempts ≥ 0.90`.
 - `GET /api/sweeps/{id}` returns a saved sweep and its aggregate first-success distributions.
 
 The optional `seed` field makes a run exactly reproducible.

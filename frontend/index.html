@@ -30,7 +30,7 @@
       <div class="mode-stack">
         <div class="mode-switch" role="group" aria-label="Experiment mode">
           <button class="mode-option active" data-mode="fixed" aria-pressed="true"><span>KNOWN ODDS</span><strong>One probability</strong></button>
-          <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 1—99%</strong></button>
+          <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 0.1—99%</strong></button>
         </div>
 
         <div id="fixed-rate-panel" class="rate-control">
@@ -45,8 +45,8 @@
         </div>
 
         <div id="sweep-rate-panel" class="sweep-primer hidden">
-          <span class="sweep-mark">99×</span>
-          <div><strong>No probability required.</strong><p>The engine repeats the complete agent field at every whole-number probability from 1% through 99%.</p></div>
+          <span class="sweep-mark">108×</span>
+          <div><strong>No probability required.</strong><p>The engine tests 0.1% through 0.9%, then every whole-number probability from 1% through 99%.</p></div>
         </div>
       </div>
 
@@ -216,11 +216,11 @@
           <span class="step">02</span>
           <div><p class="eyebrow">UNKNOWN-ODDS LAB</p><h2 id="sweep-title">The probability atlas</h2></div>
         </div>
-        <p>One identical experiment, repeated at every probability from 1% to 99%. Use the decision lens to translate uncertainty into an attempt limit you can explain.</p>
+        <p>One identical experiment across 108 odds: 0.1% through 0.9%, then 1% through 99%. The decision lens automatically finds the first profitable odds and its 90% move-on boundary.</p>
       </div>
 
       <div class="sweep-stats" aria-live="polite">
-        <div><span>PROBABILITIES TESTED</span><strong>99</strong></div>
+        <div><span>PROBABILITIES TESTED</span><strong id="sweep-probability-count">108</strong></div>
         <div><span>TOTAL TRIALS</span><strong id="sweep-total">—</strong></div>
         <div><span>BREAK-EVEN ODDS</span><strong id="sweep-breakeven">—</strong></div>
         <div><span>COMPUTE TIME</span><strong id="sweep-duration">—</strong></div>
@@ -230,24 +230,21 @@
         <div class="decision-copy">
           <p class="eyebrow">DECISION LENS</p>
           <h3 id="decision-title">When should I move on?</h3>
-          <p id="decision-summary">Choose a probability and the confidence you want before treating a run of misses as your stopping boundary.</p>
+          <p id="decision-summary">The engine will find the first tested probability with positive expected value, then calculate the attempts needed for at least a 90% chance of one win.</p>
         </div>
         <div class="decision-controls">
-          <label for="sweep-probability">PROBABILITY TO INSPECT <strong id="selected-probability">25%</strong></label>
-          <input id="sweep-probability" type="range" min="1" max="99" step="1" value="25" aria-label="Probability to inspect">
-          <div class="confidence-row">
-            <span>DESIRED CHANCE OF ≥1 WIN</span>
-            <div role="group" aria-label="Decision confidence">
-              <button data-confidence="0.5">50%</button>
-              <button data-confidence="0.75">75%</button>
-              <button class="active" data-confidence="0.9">90%</button>
-              <button data-confidence="0.95">95%</button>
-              <button data-confidence="0.99">99%</button>
-            </div>
+          <label for="sweep-probability">ATLAS CURSOR <strong id="selected-probability">0.1%</strong></label>
+          <input id="sweep-probability" type="range" min="0" max="107" step="1" value="0" aria-label="Probability to inspect">
+          <div class="policy-lock">
+            <span>AUTOMATIC STOP POLICY</span>
+            <strong>FIRST POSITIVE-EV ODDS</strong>
+            <small>90% CHANCE OF ≥1 WIN</small>
           </div>
+          <button id="jump-winning" class="decision-jump" type="button">JUMP TO WINNING ODDS →</button>
         </div>
         <div class="decision-readout">
           <span>MOVE-ON BOUNDARY</span><strong id="decision-attempt">—</strong><small id="decision-confidence-copy">—</small>
+          <div><span>FIRST WINNING ODDS</span><b id="decision-winning-probability">—</b></div>
           <div><span>MAXIMUM SPEND</span><b id="decision-spend">—</b></div>
           <div><span>VALUE / NEXT TRY</span><b id="decision-marginal">—</b></div>
         </div>
@@ -279,13 +276,13 @@
         </article>
 
         <article class="sweep-card sweep-acid">
-          <header><span>ATLAS / 05</span><div><h4>Move-on boundary</h4><p>Attempts needed to reach your chosen chance of seeing at least one win.</p></div></header>
+          <header><span>ATLAS / 05</span><div><h4>Move-on boundary</h4><p>Attempts needed to reach the automatic 90% chance of seeing at least one win.</p></div></header>
           <canvas id="sweep-stop-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Recommended attempt boundary across probabilities"></canvas>
           <footer>CONFIDENCE POLICY <strong id="sweep-stop-insight">—</strong></footer>
         </article>
 
         <article class="sweep-card">
-          <header><span>ATLAS / 06</span><div><h4>Cost to confidence</h4><p>The maximum spend required to reach that move-on boundary.</p></div></header>
+          <header><span>ATLAS / 06</span><div><h4>Cost to 90% coverage</h4><p>The maximum spend required to reach that move-on boundary.</p></div></header>
           <canvas id="sweep-cost-chart" class="data-chart sweep-chart sweep-selectable" role="img" aria-label="Cost required to reach selected confidence across probabilities"></canvas>
           <footer>ATTEMPT COST EXPOSURE <strong id="sweep-cost-insight">—</strong></footer>
         </article>
@@ -309,7 +306,7 @@
         </article>
 
         <article class="sweep-card sweep-wide decision-curve-card">
-          <header><span>ATLAS / 10</span><div><h4>Attempt decision curve</h4><p>For the selected probability: cumulative chance of a first win, remaining miss risk, and your chosen boundary.</p></div></header>
+          <header><span>ATLAS / 10</span><div><h4>Attempt decision curve</h4><p>For the inspected probability: cumulative chance of a first win, remaining miss risk, and the fixed 90% boundary.</p></div></header>
           <canvas id="sweep-decision-chart" class="data-chart sweep-chart" role="img" aria-label="Cumulative first-win chance and miss risk by attempt"></canvas>
           <footer>SELECTED PROBABILITY <strong id="sweep-decision-insight">—</strong></footer>
         </article>
