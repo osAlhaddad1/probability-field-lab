@@ -315,4 +315,89 @@ footer { border-top: 1px solid var(--ink); min-height: 90px; display: flex; just
   .sweep-card footer { flex-direction: column; }
   .sweep-card footer strong { text-align: left; }
 }
+/* ---------------------------------------------------------------- uncertain world */
+.mode-switch { grid-template-columns: repeat(3, 1fr); }
+.uncertain-primer { min-height: 215px; border: 1px solid var(--ink); background: var(--ink); color: var(--white); display: grid; grid-template-columns: auto 1fr; align-items: end; gap: 22px; padding: 24px; }
+.uncertain-mark { font: 500 clamp(54px, 6vw, 92px)/.8 var(--mono); letter-spacing: -.09em; color: var(--acid); }
+.uncertain-mark i { font-style: normal; font-size: .5em; }
+.uncertain-primer strong { display: block; font-size: 20px; letter-spacing: -.03em; }
+.uncertain-primer p { margin: 8px 0 0; max-width: 400px; font-size: 12px; line-height: 1.55; color: #b3bdb6; }
+.uncertain-primer em { color: var(--acid); font-style: italic; }
+
+.belief-deck { padding-top: 84px; }
+.belief-head-row { display: grid; grid-template-columns: 1.1fr .9fr; gap: 60px; align-items: end; margin-bottom: 34px; }
+.belief-head-row > p { max-width: 620px; justify-self: end; margin: 0; font-size: 15px; line-height: 1.65; }
+.belief-head-row strong { font-weight: 600; }
+
+.learning-law { display: grid; grid-template-columns: auto 1fr 1fr; border: 1px solid var(--ink); margin-bottom: 1px; }
+.learning-law > span { display: grid; place-items: center; padding: 0 18px; border-right: 1px solid var(--ink); background: var(--panel); font: 8px var(--mono); letter-spacing: .08em; }
+.law-option { min-height: 82px; padding: 14px 18px; border: 0; border-right: 1px solid var(--ink); background: var(--white); text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+.law-option:last-child { border-right: 0; }
+.law-option strong { font: 500 12px var(--mono); letter-spacing: .04em; }
+.law-option small { color: #647168; font-size: 11px; line-height: 1.45; }
+.law-option.active { background: var(--ink); color: var(--white); }
+.law-option.active strong { color: var(--acid); }
+.law-option.active small { color: #a9b4ad; }
+
+.belief-table { border: 1px solid var(--ink); background: rgba(251,251,247,.42); }
+.belief-columns, .belief-row { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1.15fr; }
+.belief-columns { border-bottom: 1px solid var(--ink); background: var(--panel); }
+.belief-columns span { padding: 11px 18px; border-right: 1px solid var(--line); font: 8px var(--mono); letter-spacing: .08em; }
+.belief-columns span:last-child { border-right: 0; }
+.belief-row { border-bottom: 1px solid var(--line); }
+.belief-row:last-child { border-bottom: 0; }
+.belief-row.disabled { opacity: .4; }
+.belief-name { padding: 15px 18px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+.belief-name strong { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.belief-name small { color: #667169; font-size: 11px; line-height: 1.4; }
+.belief-field { padding: 10px 18px; border-right: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
+.belief-field:last-child { border-right: 0; }
+.belief-field input { width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); padding: 4px 0; text-align: right; font: 500 21px var(--mono); outline: none; }
+.belief-field input:focus { border-bottom-color: var(--green); color: var(--green-dark); }
+.belief-field input.invalid { border-bottom-color: #a03b28; color: #a03b28; }
+.belief-field i { font-style: normal; color: #667169; font: 9px var(--mono); }
+.belief-field.certain input { color: #8b948d; }
+
+.uncertain-results { padding-top: 100px; }
+.uncertain-verdict { display: flex; flex-direction: column; justify-content: center; }
+.uncertain-verdict > span { font: 8px var(--mono); letter-spacing: .08em; }
+.uncertain-verdict > strong { margin: 8px 0 4px; font: 500 clamp(46px, 6vw, 88px)/.86 var(--mono); letter-spacing: -.075em; }
+.uncertain-verdict > small { color: #5d6a61; font: 8px/1.55 var(--mono); letter-spacing: .04em; }
+.verdict-split { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 22px; border-top: 1px solid var(--line); padding-top: 14px; }
+.verdict-split div { display: flex; flex-direction: column; gap: 5px; }
+.verdict-split span { font: 7px var(--mono); letter-spacing: .07em; color: #59655d; }
+.verdict-split b { font: 500 clamp(15px, 1.7vw, 22px) var(--mono); letter-spacing: -.04em; }
+.verdict-split b.positive, .decision-readout b.positive { color: var(--green-dark); }
+.verdict-split b.negative, .decision-readout b.negative { color: #a74d32; }
+
+.key.band { width: 11px; height: 8px; background: rgba(22,160,93,.35); }
+.key.band.wide { background: rgba(22,160,93,.16); }
+.key.luck { background: #7e8a81; }
+.key.parameter { background: var(--green); }
+.key.hyper { background: #a74d32; }
+.key.spend { background: #a74d32; }
+.sweep-card.sweep-dark .key.band { background: rgba(214,242,92,.34); }
+.sweep-card.sweep-dark .key.band.wide { background: rgba(214,242,92,.15); }
+.risk-source-card { background: var(--panel); }
+
+@media (max-width: 850px) {
+  .belief-head-row { grid-template-columns: 1fr; gap: 24px; }
+  .belief-head-row > p { justify-self: start; }
+  .learning-law { grid-template-columns: 1fr; }
+  .learning-law > span { padding: 10px 18px; border-right: 0; border-bottom: 1px solid var(--ink); }
+  .law-option { border-right: 0; border-bottom: 1px solid var(--ink); }
+  .belief-columns { display: none; }
+  .belief-row { grid-template-columns: 1fr 1fr; }
+  .belief-name { grid-column: span 2; border-right: 0; border-bottom: 1px solid var(--line); }
+  .belief-row { padding-bottom: 6px; }
+  .verdict-split { grid-template-columns: 1fr; gap: 10px; }
+}
+@media (max-width: 520px) {
+  .mode-switch { grid-template-columns: 1fr; }
+  .uncertain-primer { grid-template-columns: 1fr; align-items: start; }
+  .belief-row { grid-template-columns: 1fr; }
+  .belief-name { grid-column: span 1; }
+  .belief-field { border-right: 0; border-bottom: 1px solid var(--line); }
+  .belief-field::before { content: attr(data-label); margin-right: auto; color: #667169; font: 8px var(--mono); letter-spacing: .06em; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; } }

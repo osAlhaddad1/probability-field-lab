@@ -31,6 +31,7 @@
         <div class="mode-switch" role="group" aria-label="Experiment mode">
           <button class="mode-option active" data-mode="fixed" aria-pressed="true"><span>KNOWN ODDS</span><strong>One probability</strong></button>
           <button class="mode-option" data-mode="sweep" aria-pressed="false"><span>UNKNOWN ODDS</span><strong>Sweep 0.01—99.9%</strong></button>
+          <button class="mode-option" data-mode="uncertain" aria-pressed="false"><span>UNCERTAIN WORLD</span><strong>Beliefs &amp; learning</strong></button>
         </div>
 
         <div id="fixed-rate-panel" class="rate-control">
@@ -42,6 +43,14 @@
           <input id="rate-slider" type="range" min="0" max="100" step="0.1" value="1" aria-label="Success probability slider">
           <div class="range-labels"><span>0 / IMPOSSIBLE</span><span>100 / CERTAIN</span></div>
           <p id="rate-help">Applied independently to every game in the experiment.</p>
+        </div>
+
+        <div id="uncertain-rate-panel" class="uncertain-primer hidden">
+          <span class="uncertain-mark">3<i>&#215;</i></span>
+          <div>
+            <strong>Three layers of doubt.</strong>
+            <p>Every number gets a best guess, how wrong that guess could be, and how wrong <em>that</em> could be. Inside each drawn world the game is solved exactly, so the error bars come only from what you said you did not know.</p>
+          </div>
         </div>
 
         <div id="sweep-rate-panel" class="sweep-primer hidden">
@@ -59,11 +68,38 @@
         <p id="workload-warning" class="workload-warning">NO PROJECT LIMIT · CAPACITY DEPENDS ON THIS MACHINE</p>
       </div>
 
+      <div id="uncertain-spec" class="run-spec hidden">
+        <label><span>MOST TRIES YOU WOULD CONSIDER</span><input id="uncertain-attempts" type="number" min="1" step="1" value="400"></label>
+        <div><span>SAMPLING EFFORT</span><strong id="uncertain-total">AUTOMATIC</strong></div>
+        <p id="uncertain-warning" class="workload-warning">THE ENGINE MEASURES ITS OWN ERROR AND KEEPS WORKING UNTIL THE ANSWER IS STEADY</p>
+      </div>
+
       <button id="run-button" class="run-button">
         <span class="button-label">RUN EXPERIMENT</span>
         <span class="button-working">GENERATING FIELD…</span>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M14 7l5 5-5 5"/></svg>
       </button>
+    </section>
+
+    <section id="uncertain-parameters" class="belief-deck hidden" aria-labelledby="belief-title">
+      <div class="belief-head-row">
+        <div class="deck-heading">
+          <span class="step">01B</span>
+          <div><p class="eyebrow">STATE YOUR BELIEFS</p><h2 id="belief-title">What you think,<br>and how sure you are.</h2></div>
+        </div>
+        <p>Each parameter takes three numbers. The <strong>best guess</strong> is the single value you would name if forced. The <strong>uncertainty</strong> is how far off that guess could plausibly be, as a percentage of it. The <strong>doubt about the doubt</strong> asks how much you trust that error bar &mdash; leave it at zero when you are confident in it, raise it when the error bar is itself a guess.</p>
+      </div>
+
+      <div class="learning-law" role="group" aria-label="Learning law">
+        <span>HOW LEARNING WORKS</span>
+        <button class="law-option active" data-law="logit" aria-pressed="true"><strong>LOG-ODDS GAIN</strong><small>Each attempt adds a fixed amount of log-odds. Improvement never quite reaches certainty and needs no ceiling.</small></button>
+        <button class="law-option" data-law="ceiling" aria-pressed="false"><strong>APPROACH A CEILING</strong><small>Each attempt closes a fixed fraction of the gap to a skill limit you name below.</small></button>
+      </div>
+
+      <div class="belief-table">
+        <div class="belief-columns"><span>PARAMETER</span><span>BEST GUESS</span><span>UNCERTAINTY</span><span>DOUBT ABOUT THE DOUBT</span></div>
+        <div id="belief-rows"></div>
+      </div>
     </section>
 
     <section id="results" class="results hidden" aria-labelledby="results-title">
@@ -330,6 +366,105 @@
           <header><span>ATLAS / 10</span><div><h4>Attempt decision curve</h4><p>For the inspected probability: cumulative chance of a first win, remaining miss risk, and the fixed 90% boundary.</p></div></header>
           <canvas id="sweep-decision-chart" class="data-chart sweep-chart" role="img" aria-label="Cumulative first-win chance and miss risk by attempt"></canvas>
           <footer>SELECTED PROBABILITY <strong id="sweep-decision-insight">—</strong></footer>
+        </article>
+      </div>
+    </section>
+
+    <section id="uncertain-results" class="uncertain-results hidden" aria-labelledby="uncertain-title">
+      <div class="sweep-result-head">
+        <div class="deck-heading">
+          <span class="step">02</span>
+          <div><p class="eyebrow">UNCERTAIN-WORLD LAB</p><h2 id="uncertain-title">The shape of not knowing</h2></div>
+        </div>
+        <p>Each world draws a different set of error bars; each universe inside it draws different parameters. Within a universe the game is solved in closed form rather than played out, so everything below is exact given the beliefs you stated &mdash; the only sampling error lies in exploring your uncertainty.</p>
+      </div>
+
+      <div class="sweep-stats uncertain-stats" aria-live="polite">
+        <div><span>UNIVERSES EXPLORED</span><strong id="uncertain-universe-count">&mdash;</strong></div>
+        <div><span>ATTEMPT HORIZON</span><strong id="uncertain-horizon">&mdash;</strong></div>
+        <div><span>LEARNING LAW</span><strong id="uncertain-law">&mdash;</strong></div>
+        <div><span>COMPUTE TIME</span><strong id="uncertain-duration">&mdash;</strong></div>
+        <div><span>PRECISION REACHED</span><strong id="uncertain-precision">&mdash;</strong></div>
+      </div>
+
+      <section class="decision-console" aria-labelledby="uncertain-decision-title">
+        <div class="decision-copy">
+          <p class="eyebrow">THE ANSWER</p>
+          <h3 id="uncertain-decision-title">How many times<br>should I try?</h3>
+          <p id="uncertain-decision-summary">&mdash;</p>
+        </div>
+        <div class="uncertain-verdict">
+          <span>STOP AFTER</span>
+          <strong id="uncertain-stop">&mdash;</strong>
+          <small id="uncertain-stop-note">&mdash;</small>
+          <div class="verdict-split">
+            <div><span>EXPECTED PROFIT</span><b id="uncertain-profit">&mdash;</b></div>
+            <div><span>EXPECTED OUTLAY</span><b id="uncertain-spend">&mdash;</b></div>
+            <div><span>RETURN ON OUTLAY</span><b id="uncertain-roi">&mdash;</b></div>
+          </div>
+        </div>
+        <div class="decision-readout">
+          <span>CHANCE YOU END UP AHEAD</span><strong id="uncertain-profit-chance">&mdash;</strong>
+          <small id="uncertain-win-chance">&mdash;</small>
+          <div><span>TYPICAL CASE (P50)</span><b id="uncertain-p50">&mdash;</b></div>
+          <div><span>BAD CASE (P05)</span><b id="uncertain-p05">&mdash;</b></div>
+          <div><span>WORST 5% AVERAGE</span><b id="uncertain-cvar">&mdash;</b></div>
+        </div>
+      </section>
+
+      <div class="sweep-grid">
+        <article class="sweep-card sweep-wide">
+          <header><span>BELIEF / 01</span><div><h4>Profit against where you stop</h4><p>The expected result of quitting after each number of attempts, with the middle half and the middle 90% of outcomes behind it.</p></div></header>
+          <canvas id="uncertain-profit-chart" class="data-chart sweep-chart" role="img" aria-label="Expected profit by stopping attempt with credible bands"></canvas>
+          <footer><span class="key observed"></span>EXPECTED <span class="key band"></span>50% RANGE <span class="key band wide"></span>90% RANGE <strong id="uncertain-profit-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-acid">
+          <header><span>BELIEF / 02</span><div><h4>Is one more try worth it?</h4><p>The value of playing each attempt rather than stopping just before it. Once this is below zero for good, you are done.</p></div></header>
+          <canvas id="uncertain-marginal-chart" class="data-chart sweep-chart" role="img" aria-label="Marginal value of each further attempt"></canvas>
+          <footer><span class="key observed"></span>VALUE OF THE NEXT TRY <strong id="uncertain-marginal-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-dark">
+          <header><span>BELIEF / 03</span><div><h4>Getting better as you go</h4><p>Your chance of winning on each attempt, fanned out across everything you might be. The dashed line is the chance you would need just to break even.</p></div></header>
+          <canvas id="uncertain-learning-chart" class="data-chart sweep-chart" role="img" aria-label="Win probability by attempt with credible bands"></canvas>
+          <footer><span class="key observed"></span>MEDIAN <span class="key band"></span>50% <span class="key band wide"></span>90% <span class="key target"></span>BREAK-EVEN <strong id="uncertain-learning-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>BELIEF / 04</span><div><h4>Where you might land</h4><p>The full spread of outcomes if you follow the recommendation. Everything left of the line is a loss.</p></div></header>
+          <canvas id="uncertain-distribution-chart" class="data-chart sweep-chart" role="img" aria-label="Distribution of profit at the recommended stopping point"></canvas>
+          <footer><span class="key positive"></span>PROFIT <span class="key negative"></span>LOSS <strong id="uncertain-distribution-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>BELIEF / 05</span><div><h4>Chance of ending ahead</h4><p>The probability of finishing in profit for each place you could stop. Its peak sits elsewhere than average profit, and that gap is the risk you are choosing.</p></div></header>
+          <canvas id="uncertain-chance-chart" class="data-chart sweep-chart" role="img" aria-label="Probability of ending in profit by stopping attempt"></canvas>
+          <footer><span class="key observed"></span>ENDS IN PROFIT <strong id="uncertain-chance-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-wide risk-source-card">
+          <header><span>BELIEF / 06</span><div><h4>Why the outcome is uncertain</h4><p>Your risk split three ways: the luck of the game itself, not knowing the parameters, and not knowing how badly you know them. Only the first is unavoidable &mdash; the other two shrink if you go and find something out.</p></div></header>
+          <canvas id="uncertain-variance-chart" class="data-chart sweep-chart" role="img" aria-label="Share of outcome variance from luck, parameter uncertainty and meta-uncertainty"></canvas>
+          <footer><span class="key luck"></span>LUCK OF THE GAME <span class="key parameter"></span>NOT KNOWING THE NUMBERS <span class="key hyper"></span>NOT KNOWING YOUR ERROR BARS <strong id="uncertain-variance-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>BELIEF / 07</span><div><h4>Which unknown moves the needle</h4><p>How strongly each parameter drives the result, measured on ranks so a strong but curved relationship still registers.</p></div></header>
+          <canvas id="uncertain-sensitivity-chart" class="data-chart sweep-chart" role="img" aria-label="Sensitivity of the outcome to each parameter"></canvas>
+          <footer><span class="key observed"></span>SHARE OF INFLUENCE <strong id="uncertain-sensitivity-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card">
+          <header><span>BELIEF / 08</span><div><h4>What an answer would be worth</h4><p>How much better you could do by learning one parameter exactly before deciding. This is the most it is worth paying to find out.</p></div></header>
+          <canvas id="uncertain-information-chart" class="data-chart sweep-chart" role="img" aria-label="Value of learning each parameter exactly"></canvas>
+          <footer><span class="key observed"></span>WORTH LEARNING <span class="key target"></span>KNOWING EVERYTHING <strong id="uncertain-information-insight">&mdash;</strong></footer>
+        </article>
+
+        <article class="sweep-card sweep-wide">
+          <header><span>BELIEF / 09</span><div><h4>Chance of a win against money spent</h4><p>How the odds of having won at least once build up, and what you will have spent by the time they do.</p></div></header>
+          <canvas id="uncertain-progress-chart" class="data-chart sweep-chart" role="img" aria-label="Cumulative chance of a win and expected spend by attempt"></canvas>
+          <footer><span class="key observed"></span>CHANCE OF A WIN <span class="key spend"></span>EXPECTED SPEND <strong id="uncertain-progress-insight">&mdash;</strong></footer>
         </article>
       </div>
     </section>

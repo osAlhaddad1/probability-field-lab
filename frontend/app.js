@@ -66,6 +66,7 @@ function financialValue(input) {
 }
 
 function updateWorkload() {
+  if (experimentMode === 'uncertain') return updateUncertainWorkload();
   const agents = integerValue(agentCountInput);
   const games = integerValue(gameCountInput);
   const gameCost = financialValue(gameCostInput);
@@ -96,14 +97,18 @@ winRewardInput.addEventListener('input', updateWorkload);
 updateWorkload();
 
 function setExperimentMode(mode) {
-  experimentMode = mode === 'sweep' ? 'sweep' : 'fixed';
+  experimentMode = ['fixed', 'sweep', 'uncertain'].includes(mode) ? mode : 'fixed';
   document.querySelectorAll('[data-mode]').forEach(button => {
     const active = button.dataset.mode === experimentMode;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
-  fixedRatePanel.classList.toggle('hidden', experimentMode === 'sweep');
+  fixedRatePanel.classList.toggle('hidden', experimentMode !== 'fixed');
   sweepRatePanel.classList.toggle('hidden', experimentMode !== 'sweep');
+  uncertainRatePanel.classList.toggle('hidden', experimentMode !== 'uncertain');
+  beliefDeck.classList.toggle('hidden', experimentMode !== 'uncertain');
+  uncertainSpec.classList.toggle('hidden', experimentMode !== 'uncertain');
+  runSpec.classList.toggle('hidden', experimentMode === 'uncertain');
   updateWorkload();
 }
 
@@ -115,20 +120,26 @@ runButton.addEventListener('click', async () => {
   runButton.disabled = true;
   runButton.classList.add('loading');
   try {
-    const response = await fetch(experimentMode === 'sweep' ? '/api/sweeps' : '/api/runs', {
+    const endpoint = experimentMode === 'uncertain' ? '/api/uncertain'
+      : experimentMode === 'sweep' ? '/api/sweeps' : '/api/runs';
+    const requestBody = experimentMode === 'uncertain' ? uncertainRequest(workload) : {
+      ...(experimentMode === 'fixed' ? { successRate: clampRate(rateNumber.value) / 100 } : {}),
+      agentCount: workload.agents,
+      gamesPerAgent: workload.games,
+      gameCost: workload.gameCost,
+      winReward: workload.winReward
+    };
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(experimentMode === 'fixed' ? { successRate: clampRate(rateNumber.value) / 100 } : {}),
-        agentCount: workload.agents,
-        gamesPerAgent: workload.games,
-        gameCost: workload.gameCost,
-        winReward: workload.winReward
-      })
+      body: JSON.stringify(requestBody)
     });
     if (!response.ok) throw new Error((await response.json()).error || 'Experiment failed');
     const payload = await response.json();
-    if (experimentMode === 'sweep') {
+    if (experimentMode === 'uncertain') {
+      showUncertain(payload);
+      uncertainResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (experimentMode === 'sweep') {
       showSweep(payload);
       sweepResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
@@ -157,6 +168,8 @@ function showRun(run) {
   updateWorkload();
   resultsSection.classList.remove('hidden');
   sweepResultsSection.classList.add('hidden');
+  uncertainResultsSection.classList.add('hidden');
+  currentUncertain = null;
   const successes = run.totalSuccesses;
   const failures = run.totalGames - successes;
   const actualPercent = successes / run.totalGames * 100;
@@ -1106,6 +1119,8 @@ function showSweep(sweep) {
   winRewardInput.value = sweep.winReward;
   resultsSection.classList.add('hidden');
   sweepResultsSection.classList.remove('hidden');
+  uncertainResultsSection.classList.add('hidden');
+  currentUncertain = null;
   $('#sweep-total').textContent = sweep.totalGames.toLocaleString();
   $('#sweep-probability-count').textContent = sweep.probabilityCount.toLocaleString();
   $('#sweep-duration').textContent = `${sweep.durationMs} ms`;
@@ -1539,11 +1554,12 @@ document.addEventListener('keydown', event => {
 
 let chartResizeTimer;
 window.addEventListener('resize', () => {
-  if (!currentRun && !currentSweep) return;
+  if (!currentRun && !currentSweep && !currentUncertain) return;
   clearTimeout(chartResizeTimer);
   chartResizeTimer = setTimeout(() => {
     if (currentRun) drawAnalytics(currentRun);
     if (currentSweep) drawSweepAtlas(currentSweep);
+    if (currentUncertain) drawUncertain(currentUncertain);
   }, 120);
 });
 $('#export-button').addEventListener('click', () => {
@@ -1557,3 +1573,682 @@ $('#export-button').addEventListener('click', () => {
   link.click();
   URL.revokeObjectURL(link.href);
 });
+
+/* ================================================================= UNCERTAIN WORLD
+ * The third mode. Every parameter is stated as three numbers — a best guess, how
+ * wrong it could be, and how wrong that could be — and the engine returns exact
+ * results for each drawn world rather than a simulation of them.
+ */
+
+const uncertainResultsSection = $('#uncertain-results');
+const beliefDeck = $('#uncertain-parameters');
+const uncertainRatePanel = $('#uncertain-rate-panel');
+const uncertainSpec = $('#uncertain-spec');
+const runSpec = document.querySelector('.run-spec:not(#uncertain-spec)');
+let currentUncertain = null;
+let learningLaw = 'logit';
+
+/**
+ * Uncertainty is entered as a percentage of the best guess, which is what a
+ * coefficient of variation is. Probabilities and the improvement rate are
+ * entered in the units people actually think in and converted on the way out.
+ */
+const BELIEFS = [
+  {
+    key: 'entryCost', label: 'Entry cost', unit: '',
+    hint: 'Paid once before the first attempt. Leave at zero if there is no cost to start.',
+    mean: 0, uncertainty: 20, meta: 30, step: 'any', min: 0
+  },
+  {
+    key: 'attemptCost', label: 'Cost per attempt', unit: '',
+    hint: 'Charged every single time you try, win or lose.',
+    mean: 1, uncertainty: 20, meta: 30, step: 'any', min: 0
+  },
+  {
+    key: 'winReward', label: 'Reward per win', unit: '',
+    hint: 'What one win pays. The run stops at the first win.',
+    mean: 100, uncertainty: 30, meta: 30, step: 'any', min: 0
+  },
+  {
+    key: 'baseProbability', label: 'Starting win chance', unit: '%',
+    hint: 'Your chance of winning on the very first attempt, before any learning.',
+    mean: 2, uncertainty: 50, meta: 40, step: 'any', min: 0.0001, max: 99.9999, percent: true
+  },
+  {
+    key: 'learningRate', label: 'Improvement per attempt', unit: '%',
+    hint: 'Under the log-odds law, how much your odds grow each attempt. Under the ceiling law, how much of the remaining gap you close. Zero means you never improve.',
+    mean: 1, uncertainty: 60, meta: 50, step: 'any', min: 0, max: 99.9, rate: true
+  },
+  {
+    key: 'skillCeiling', label: 'Skill ceiling', unit: '%',
+    hint: 'The best you could ever become. Only the ceiling law uses this.',
+    mean: 60, uncertainty: 20, meta: 30, step: 'any', min: 0.0001, max: 99.9999, percent: true, ceilingOnly: true
+  }
+];
+
+function buildBeliefRows() {
+  $('#belief-rows').innerHTML = BELIEFS.map(belief => `
+    <div class="belief-row" data-belief-row="${belief.key}">
+      <div class="belief-name"><strong>${belief.label}</strong><small>${belief.hint}</small></div>
+      <div class="belief-field" data-label="BEST GUESS">
+        <input type="number" step="${belief.step}" value="${belief.mean}" data-belief="${belief.key}" data-field="mean"
+               aria-label="${belief.label}, best guess">${belief.unit ? `<i>${belief.unit}</i>` : ''}
+      </div>
+      <div class="belief-field" data-label="UNCERTAINTY">
+        <input type="number" step="any" min="0" max="1000" value="${belief.uncertainty}" data-belief="${belief.key}" data-field="uncertainty"
+               aria-label="${belief.label}, uncertainty"><i>%</i>
+      </div>
+      <div class="belief-field" data-label="DOUBT ABOUT THE DOUBT">
+        <input type="number" step="any" min="0" max="1000" value="${belief.meta}" data-belief="${belief.key}" data-field="meta"
+               aria-label="${belief.label}, doubt about the doubt"><i>%</i>
+      </div>
+    </div>`).join('');
+  $('#belief-rows').querySelectorAll('input').forEach(input => {
+    input.addEventListener('input', updateWorkload);
+  });
+  applyLearningLaw();
+}
+
+function applyLearningLaw() {
+  document.querySelectorAll('[data-law]').forEach(button => {
+    const active = button.dataset.law === learningLaw;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  // The skill ceiling has no meaning under the log-odds law, so it is dimmed
+  // rather than hidden: the number stays where the reader last saw it.
+  BELIEFS.filter(belief => belief.ceilingOnly).forEach(belief => {
+    const row = document.querySelector(`[data-belief-row="${belief.key}"]`);
+    if (row) row.classList.toggle('disabled', learningLaw !== 'ceiling');
+  });
+}
+
+document.querySelectorAll('[data-law]').forEach(button => button.addEventListener('click', () => {
+  learningLaw = button.dataset.law;
+  applyLearningLaw();
+}));
+
+function beliefInput(key, field) {
+  return document.querySelector(`input[data-belief="${key}"][data-field="${field}"]`);
+}
+
+/** Reads the belief table, flags anything unusable, and returns the request payload. */
+function readBeliefs() {
+  const payload = {};
+  let invalid = false;
+  BELIEFS.forEach(belief => {
+    const raw = {
+      mean: Number(beliefInput(belief.key, 'mean').value),
+      uncertainty: Number(beliefInput(belief.key, 'uncertainty').value),
+      meta: Number(beliefInput(belief.key, 'meta').value)
+    };
+    const badMean = !Number.isFinite(raw.mean) || raw.mean < (belief.min ?? 0)
+      || (belief.max !== undefined && raw.mean > belief.max);
+    const badUncertainty = !Number.isFinite(raw.uncertainty) || raw.uncertainty < 0 || raw.uncertainty > 1000;
+    const badMeta = !Number.isFinite(raw.meta) || raw.meta < 0 || raw.meta > 1000;
+    beliefInput(belief.key, 'mean').classList.toggle('invalid', badMean);
+    beliefInput(belief.key, 'uncertainty').classList.toggle('invalid', badUncertainty);
+    beliefInput(belief.key, 'meta').classList.toggle('invalid', badMeta);
+    if (badMean || badUncertainty || badMeta) {
+      invalid = true;
+      return;
+    }
+    let mean = raw.mean;
+    if (belief.percent) mean = raw.mean / 100;
+    if (belief.rate) mean = improvementToRate(raw.mean / 100);
+    payload[belief.key] = {
+      mean,
+      uncertainty: raw.uncertainty / 100,
+      metaUncertainty: raw.meta / 100
+    };
+  });
+  return { payload, invalid };
+}
+
+/**
+ * Turns a per-attempt improvement percentage into the rate the engine wants.
+ * Under the log-odds law the odds grow by that fraction each attempt; under the
+ * ceiling law that fraction of the remaining gap is closed.
+ */
+function improvementToRate(fraction) {
+  if (!(fraction > 0)) return 0;
+  return learningLaw === 'ceiling'
+    ? -Math.log(Math.max(1e-9, 1 - Math.min(0.999, fraction)))
+    : Math.log1p(fraction);
+}
+
+function rateToImprovement(rate) {
+  if (!(rate > 0)) return 0;
+  return learningLaw === 'ceiling' ? 1 - Math.exp(-rate) : Math.expm1(rate);
+}
+
+function updateUncertainWorkload() {
+  const attempts = Number($('#uncertain-attempts').value);
+  const beliefs = readBeliefs();
+  const badHorizon = !Number.isInteger(attempts) || attempts < 1 || attempts > 5000000;
+
+  const warning = $('#uncertain-warning');
+  warning.classList.toggle('invalid', badHorizon || beliefs.invalid);
+  warning.textContent = beliefs.invalid
+    ? 'A HIGHLIGHTED BELIEF IS OUT OF RANGE'
+    : badHorizon
+      ? 'THE ATTEMPT LIMIT MUST BE A POSITIVE WHOLE NUMBER'
+      : 'THE ENGINE MEASURES ITS OWN ERROR AND KEEPS WORKING UNTIL THE ANSWER IS STEADY';
+
+  runButton.querySelector('.button-label').textContent = 'EXPLORE EVERY WORLD';
+  const invalid = badHorizon || beliefs.invalid;
+  runButton.disabled = invalid;
+  return { invalid, attempts, beliefs: beliefs.payload };
+}
+
+$('#uncertain-attempts').addEventListener('input', updateWorkload);
+
+// How many worlds to explore is a question about the sampler, not about the game,
+// so it is not asked. The engine sizes its own run from a pilot and reports the
+// precision it actually reached.
+function uncertainRequest(workload) {
+  return { ...workload.beliefs, maxAttempts: workload.attempts, learningLaw };
+}
+
+/* --------------------------------------------------------------- presentation */
+
+function showUncertain(result) {
+  currentUncertain = result;
+  currentRun = null;
+  currentSweep = null;
+  pinnedChart = null;
+  chartTooltip.classList.remove('visible');
+  resultsSection.classList.add('hidden');
+  sweepResultsSection.classList.add('hidden');
+  uncertainResultsSection.classList.remove('hidden');
+
+  const optimal = result.optimal;
+  $('#uncertain-universe-count').textContent = Number(result.universeCount).toLocaleString();
+  $('#uncertain-horizon').textContent = Number(result.maxAttempts).toLocaleString();
+  $('#uncertain-law').textContent = result.learningLaw === 'ceiling' ? 'CEILING' : 'LOG-ODDS';
+  $('#uncertain-duration').textContent = `${result.durationMs} ms`;
+  const precision = result.precision;
+  $('#uncertain-precision').textContent = Number.isFinite(precision.standardError)
+    ? `± ${formatFinancial(precision.standardError)}`
+    : '—';
+  $('#uncertain-total').textContent = `${Number(precision.worlds).toLocaleString()} WORLDS`;
+
+  $('#uncertain-stop').textContent = Number(optimal.attempts).toLocaleString();
+  $('#uncertain-stop-note').textContent = optimal.attempts >= result.maxAttempts
+    ? 'THE HORIZON IS STILL THE BEST PLACE TO STOP — TRY EXTENDING IT'
+    : `ATTEMPTS · BEYOND THIS THE AVERAGE ATTEMPT COSTS MORE THAN IT RETURNS`;
+  setSigned($('#uncertain-profit'), optimal.expectedProfit);
+  if (Number.isFinite(precision.standardError) && precision.standardError > 0) {
+    $('#uncertain-profit').textContent += ` ± ${formatFinancial(precision.standardError)}`;
+  }
+  $('#uncertain-spend').textContent = formatFinancial(optimal.expectedSpend);
+  const roi = optimal.roiPercent;
+  $('#uncertain-roi').textContent = Number.isFinite(roi) ? `${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%` : '—';
+  $('#uncertain-roi').className = Number.isFinite(roi) ? (roi >= 0 ? 'positive' : 'negative') : '';
+
+  $('#uncertain-profit-chance').textContent = `${(optimal.profitChance * 100).toFixed(1)}%`;
+  $('#uncertain-win-chance').textContent =
+    `${(optimal.winChance * 100).toFixed(1)}% CHANCE OF AT LEAST ONE WIN BY THEN`;
+  setSigned($('#uncertain-p50'), optimal.profitP50);
+  setSigned($('#uncertain-p05'), optimal.profitP05);
+  setSigned($('#uncertain-cvar'), optimal.conditionalValueAtRisk05);
+
+  $('#uncertain-decision-summary').textContent = decisionSentence(result);
+  drawUncertain(result);
+}
+
+function setSigned(element, value) {
+  if (!Number.isFinite(value)) {
+    element.textContent = '—';
+    element.className = '';
+    return;
+  }
+  element.textContent = `${value >= 0 ? '+' : ''}${formatFinancial(value)}`;
+  element.className = value >= 0 ? 'positive' : 'negative';
+}
+
+/** A plain-language reading of the result, including when the answer is "do not play". */
+function decisionSentence(result) {
+  const optimal = result.optimal;
+  const total = optimal.varianceTotal || 1;
+  const luckShare = optimal.varianceLuck / total;
+  const knowledgeShare = (optimal.varianceParameter + optimal.varianceHyper) / total;
+  const worst = [...result.sensitivity].sort((a, b) => b.share - a.share)[0];
+  const bestToLearn = [...result.valueOfInformation.parameters].sort((a, b) => b.value - a.value)[0];
+
+  if (optimal.expectedProfit <= 0) {
+    return `On these beliefs the game does not pay: even the best stopping rule loses ${formatFinancial(Math.abs(optimal.expectedProfit))} on average. `
+      + `The least bad plan is ${optimal.attempts} attempt${optimal.attempts === 1 ? '' : 's'}. `
+      + `${knowledgeShare > .5 ? 'Most of that is uncertainty rather than bad odds, so a better estimate could change the answer' : 'That verdict is driven by the odds themselves, not by what you do not know'}.`;
+  }
+  return `Stop after ${optimal.attempts} attempt${optimal.attempts === 1 ? '' : 's'} for an expected ${formatFinancial(optimal.expectedProfit)}, `
+    + `though you only finish ahead ${(optimal.profitChance * 100).toFixed(0)}% of the time. `
+    + `${(luckShare * 100).toFixed(0)}% of the risk is the luck of the game and ${(knowledgeShare * 100).toFixed(0)}% is not knowing your own numbers`
+    + `${worst && worst.share > .25 ? `, mostly ${worst.label.toLowerCase()}` : ''}. `
+    + `${bestToLearn && bestToLearn.value > 0 ? `Pinning down ${bestToLearn.label.toLowerCase()} is worth up to ${formatFinancial(bestToLearn.value)}.` : ''}`;
+}
+
+/* --------------------------------------------------------------------- charts */
+
+const BAND_STRONG = 'rgba(22,160,93,.34)';
+const BAND_WIDE = 'rgba(22,160,93,.15)';
+const BAND_STRONG_DARK = 'rgba(214,242,92,.32)';
+const BAND_WIDE_DARK = 'rgba(214,242,92,.13)';
+const LOSS_COLOUR = '#a74d32';
+
+/** A frame whose horizontal axis is the attempt number on a logarithmic scale. */
+function attemptFrame(id, result, options) {
+  const chart = getChartContext(id, options.dark);
+  let min = options.min;
+  let max = options.max;
+  if (!(max > min)) max = min + 1;
+  const ticks = (options.ticks ?? [0, .5, 1]).map(ratio => ({ value: min + (max - min) * ratio, ratio }));
+  const last = result.maxAttempts;
+  const { plotWidth, plotHeight } = chartFrame(chart, ticks, options.format ?? (value => value.toFixed(1)),
+    ['1', last.toLocaleString()]);
+  const logMax = Math.log(Math.max(2, last));
+  const x = attempt => chart.pad.left + Math.log(Math.max(1, attempt)) / logMax * plotWidth;
+  const y = value => chart.pad.top + plotHeight * (1 - (value - min) / (max - min));
+  return { ...chart, x, y, min, max, plotWidth, plotHeight };
+}
+
+function drawBand(frame, attempts, lower, upper, colour) {
+  const { ctx, x, y } = frame;
+  ctx.fillStyle = colour;
+  ctx.beginPath();
+  attempts.forEach((attempt, index) => {
+    const point = y(clampToFrame(frame, upper[index]));
+    if (index === 0) ctx.moveTo(x(attempt), point); else ctx.lineTo(x(attempt), point);
+  });
+  for (let index = attempts.length - 1; index >= 0; index--) {
+    ctx.lineTo(x(attempts[index]), y(clampToFrame(frame, lower[index])));
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function clampToFrame(frame, value) {
+  if (!Number.isFinite(value)) return frame.min;
+  return Math.min(frame.max, Math.max(frame.min, value));
+}
+
+function drawSeries(frame, attempts, values, colour, width = 2, dash = []) {
+  const { ctx, x, y } = frame;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = width;
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  let started = false;
+  attempts.forEach((attempt, index) => {
+    const value = values[index];
+    if (!Number.isFinite(value)) return;
+    const point = y(clampToFrame(frame, value));
+    if (!started) { ctx.moveTo(x(attempt), point); started = true; } else ctx.lineTo(x(attempt), point);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawZeroLine(frame, colour) {
+  if (!(frame.min < 0 && frame.max > 0)) return;
+  const { ctx, y, pad, width } = frame;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = .8;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, y(0));
+  ctx.lineTo(width - pad.right, y(0));
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+/** The vertical rule marking the recommended stopping point. */
+function drawStopMarker(frame, attempt, colour) {
+  const { ctx, x, pad, plotHeight } = frame;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.globalAlpha = .75;
+  ctx.beginPath();
+  ctx.moveTo(x(attempt), pad.top);
+  ctx.lineTo(x(attempt), pad.top + plotHeight);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+
+function extent(...series) {
+  let min = Infinity;
+  let max = -Infinity;
+  series.forEach(values => values.forEach(value => {
+    if (!Number.isFinite(value)) return;
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+  }));
+  if (!Number.isFinite(min)) return [0, 1];
+  if (min === max) return [min - 1, max + 1];
+  const padding = (max - min) * .08;
+  return [min - padding, max + padding];
+}
+
+function drawUncertain(result) {
+  drawUncertainProfit(result);
+  drawUncertainMarginal(result);
+  drawUncertainLearning(result);
+  drawUncertainDistribution(result);
+  drawUncertainChance(result);
+  drawUncertainVariance(result);
+  drawUncertainSensitivity(result);
+  drawUncertainInformation(result);
+  drawUncertainProgress(result);
+}
+
+function attemptModel(result, attempts, describe) {
+  return { count: attempts.length, xValues: attempts.map(attempt => Math.log(Math.max(1, attempt))), describe };
+}
+
+function drawUncertainProfit(result) {
+  const [min, max] = extent(result.expectedProfit, result.profitP05, result.profitP95);
+  const frame = attemptFrame('uncertain-profit-chart', result, { min, max, format: value => formatFinancial(value, 0) });
+  drawBand(frame, result.coarseAttempts, result.profitP05, result.profitP95, BAND_WIDE);
+  drawBand(frame, result.coarseAttempts, result.profitP25, result.profitP75, BAND_STRONG);
+  drawZeroLine(frame, '#7e8a81');
+  drawSeries(frame, result.attempts, result.expectedProfit, frame.green, 2.4);
+  drawStopMarker(frame, result.optimal.attempts, frame.ink);
+
+  $('#uncertain-profit-insight').textContent =
+    `BEST AT ${result.optimal.attempts} · ${formatFinancial(result.optimal.expectedProfit)}`;
+  chartModels['uncertain-profit-chart'] = attemptModel(result, result.attempts, index => {
+    const attempt = result.attempts[index];
+    const coarse = nearestCoarse(result, attempt);
+    return `<strong>STOP AFTER ${attempt}</strong><br>`
+      + `Expected: ${formatFinancial(result.expectedProfit[index])}<br>`
+      + `Middle half: ${formatFinancial(result.profitP25[coarse])} to ${formatFinancial(result.profitP75[coarse])}<br>`
+      + `Middle 90%: ${formatFinancial(result.profitP05[coarse])} to ${formatFinancial(result.profitP95[coarse])}<br>`
+      + `Ends ahead: ${(result.profitChance[coarse] * 100).toFixed(1)}%`;
+  });
+}
+
+function nearestCoarse(result, attempt) {
+  let best = 0;
+  result.coarseAttempts.forEach((value, index) => {
+    if (Math.abs(value - attempt) < Math.abs(result.coarseAttempts[best] - attempt)) best = index;
+  });
+  return best;
+}
+
+function drawUncertainMarginal(result) {
+  const [min, max] = extent(result.marginalValue, [0]);
+  const frame = attemptFrame('uncertain-marginal-chart', result, { min, max, format: value => formatFinancial(value, 2) });
+  drawZeroLine(frame, '#3d4a42');
+  drawSeries(frame, result.attempts, result.marginalValue, '#14251d', 2.2);
+  drawStopMarker(frame, result.optimal.attempts, '#14251d');
+
+  const crossing = result.attempts.find((attempt, index) =>
+    result.marginalValue[index] < 0 && attempt >= result.optimal.attempts);
+  $('#uncertain-marginal-insight').textContent = crossing
+    ? `TURNS NEGATIVE AROUND ATTEMPT ${crossing}`
+    : 'STILL POSITIVE AT THE HORIZON';
+  chartModels['uncertain-marginal-chart'] = attemptModel(result, result.attempts, index =>
+    `<strong>ATTEMPT ${result.attempts[index]}</strong><br>`
+    + `Value of playing it: ${formatFinancial(result.marginalValue[index])}<br>`
+    + `${result.marginalValue[index] >= 0 ? 'Worth taking' : 'Costs more than it returns'}`);
+}
+
+function drawUncertainLearning(result) {
+  const breakEven = result.reference.breakEvenProbability;
+  const [, rawMax] = extent(result.probabilityP95, [Number.isFinite(breakEven) ? breakEven : 0]);
+  const max = Math.min(1, Math.max(rawMax, 1e-4));
+  const frame = attemptFrame('uncertain-learning-chart', result, {
+    min: 0, max, dark: true, format: value => `${(value * 100).toFixed(value < .1 ? 2 : 1)}%`
+  });
+  drawBand(frame, result.coarseAttempts, result.probabilityP05, result.probabilityP95, BAND_WIDE_DARK);
+  drawBand(frame, result.coarseAttempts, result.probabilityP25, result.probabilityP75, BAND_STRONG_DARK);
+  drawSeries(frame, result.coarseAttempts, result.probabilityP50, frame.green, 2.4);
+  if (Number.isFinite(breakEven) && breakEven <= max) {
+    drawSeries(frame, [1, result.maxAttempts], [breakEven, breakEven], '#fbfbf7', 1.4, [5, 4]);
+  }
+  drawStopMarker(frame, result.optimal.attempts, '#fbfbf7');
+
+  $('#uncertain-learning-insight').textContent = Number.isFinite(breakEven)
+    ? `NEEDS ${(breakEven * 100).toFixed(2)}% TO BREAK EVEN`
+    : 'NO BREAK-EVEN CHANCE';
+  chartModels['uncertain-learning-chart'] = attemptModel(result, result.coarseAttempts, index =>
+    `<strong>ATTEMPT ${result.coarseAttempts[index]}</strong><br>`
+    + `Median chance: ${(result.probabilityP50[index] * 100).toFixed(3)}%<br>`
+    + `Middle half: ${(result.probabilityP25[index] * 100).toFixed(3)}% to ${(result.probabilityP75[index] * 100).toFixed(3)}%<br>`
+    + `Middle 90%: ${(result.probabilityP05[index] * 100).toFixed(3)}% to ${(result.probabilityP95[index] * 100).toFixed(3)}%`);
+}
+
+function drawUncertainDistribution(result) {
+  const histogram = result.profitHistogram;
+  const chart = getChartContext('uncertain-distribution-chart');
+  const { ctx, width, pad } = chart;
+  const density = histogram.density;
+  const peak = Math.max(...density, 1e-9);
+  const ticks = [0, .5, 1].map(ratio => ({ value: ratio * peak * 100, ratio }));
+  const { plotWidth, plotHeight } = chartFrame(chart, ticks, value => `${value.toFixed(1)}%`,
+    [formatFinancial(histogram.low, 0), formatFinancial(histogram.high, 0)]);
+  const span = histogram.high - histogram.low;
+  const x = value => pad.left + (value - histogram.low) / span * plotWidth;
+  const barWidth = plotWidth / density.length;
+
+  density.forEach((mass, index) => {
+    const value = histogram.low + (index + .5) * span / density.length;
+    const height = mass / peak * plotHeight;
+    ctx.fillStyle = value >= 0 ? chart.green : LOSS_COLOUR;
+    ctx.globalAlpha = .85;
+    ctx.fillRect(pad.left + index * barWidth, pad.top + plotHeight - height, Math.max(1, barWidth - .5), height);
+  });
+  ctx.globalAlpha = 1;
+
+  if (histogram.low < 0 && histogram.high > 0) {
+    ctx.strokeStyle = chart.ink;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x(0), pad.top);
+    ctx.lineTo(x(0), pad.top + plotHeight);
+    ctx.stroke();
+  }
+
+  $('#uncertain-distribution-insight').textContent =
+    `${(result.optimal.profitChance * 100).toFixed(1)}% END AHEAD AFTER ${histogram.attempts}`;
+  chartModels['uncertain-distribution-chart'] = {
+    count: density.length,
+    describe: index => {
+      const from = histogram.low + index * span / density.length;
+      const to = from + span / density.length;
+      return `<strong>${formatFinancial(from)} to ${formatFinancial(to)}</strong><br>`
+        + `Share of outcomes: ${(density[index] * 100).toFixed(2)}%<br>`
+        + `${from >= 0 ? 'A profit' : 'A loss'}`;
+    }
+  };
+}
+
+function drawUncertainChance(result) {
+  const frame = attemptFrame('uncertain-chance-chart', result, {
+    min: 0, max: 1, format: value => `${(value * 100).toFixed(0)}%`
+  });
+  drawSeries(frame, result.coarseAttempts, result.profitChance, frame.green, 2.4);
+  drawStopMarker(frame, result.optimal.attempts, frame.ink);
+
+  let best = 0;
+  result.profitChance.forEach((value, index) => {
+    if (value > result.profitChance[best]) best = index;
+  });
+  const bestAttempt = result.coarseAttempts[best];
+  $('#uncertain-chance-insight').textContent =
+    `PEAKS AT ${(result.profitChance[best] * 100).toFixed(1)}% NEAR ATTEMPT ${bestAttempt}`;
+  chartModels['uncertain-chance-chart'] = attemptModel(result, result.coarseAttempts, index =>
+    `<strong>STOP AFTER ${result.coarseAttempts[index]}</strong><br>`
+    + `Ends in profit: ${(result.profitChance[index] * 100).toFixed(2)}%<br>`
+    + `Median outcome: ${formatFinancial(result.profitP50[index])}`);
+}
+
+function drawUncertainVariance(result) {
+  const chart = getChartContext('uncertain-variance-chart');
+  const { ctx, pad } = chart;
+  const ticks = [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio }));
+  const last = result.maxAttempts;
+  const { plotWidth, plotHeight } = chartFrame(chart, ticks, value => `${value.toFixed(0)}%`,
+    ['1', last.toLocaleString()]);
+  const logMax = Math.log(Math.max(2, last));
+  const x = attempt => pad.left + Math.log(Math.max(1, attempt)) / logMax * plotWidth;
+
+  // Shares rather than absolute variance: the question this chart answers is
+  // where the risk comes from, not how much of it there is.
+  const shares = result.attempts.map((attempt, index) => {
+    const luck = Math.max(0, result.varianceLuck[index]);
+    const parameter = Math.max(0, result.varianceParameter[index]);
+    const hyper = Math.max(0, result.varianceHyper[index]);
+    const total = luck + parameter + hyper;
+    return total > 0 ? [luck / total, parameter / total, hyper / total] : [1, 0, 0];
+  });
+
+  const layers = [
+    { colour: '#7e8a81', pick: share => share[0] },
+    { colour: chart.green, pick: share => share[0] + share[1] },
+    { colour: LOSS_COLOUR, pick: () => 1 }
+  ];
+  // Painted from the top down so each layer covers the one behind it.
+  for (let layer = layers.length - 1; layer >= 0; layer--) {
+    ctx.fillStyle = layers[layer].colour;
+    ctx.beginPath();
+    ctx.moveTo(x(result.attempts[0]), pad.top + plotHeight);
+    result.attempts.forEach((attempt, index) => {
+      ctx.lineTo(x(attempt), pad.top + plotHeight * (1 - layers[layer].pick(shares[index])));
+    });
+    ctx.lineTo(x(result.attempts[result.attempts.length - 1]), pad.top + plotHeight);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const optimal = result.optimal;
+  const total = optimal.varianceTotal || 1;
+  $('#uncertain-variance-insight').textContent =
+    `AT THE STOP · ${(optimal.varianceLuck / total * 100).toFixed(0)}% LUCK / `
+    + `${((optimal.varianceParameter + optimal.varianceHyper) / total * 100).toFixed(0)}% NOT KNOWING`;
+  chartModels['uncertain-variance-chart'] = attemptModel(result, result.attempts, index =>
+    `<strong>STOP AFTER ${result.attempts[index]}</strong><br>`
+    + `Luck of the game: ${(shares[index][0] * 100).toFixed(1)}%<br>`
+    + `Not knowing the numbers: ${(shares[index][1] * 100).toFixed(1)}%<br>`
+    + `Not knowing your error bars: ${(shares[index][2] * 100).toFixed(1)}%<br>`
+    + `Total spread: ${formatFinancial(Math.sqrt(Math.max(0, result.varianceLuck[index] + result.varianceParameter[index] + result.varianceHyper[index])))}`);
+}
+
+/** Horizontal bars, one per parameter, sorted by influence. */
+function horizontalBars(id, rows, options) {
+  const chart = getChartContext(id, options.dark);
+  const { ctx, width, height, pad, ink } = chart;
+  const plotLeft = 150;
+  const plotWidth = Math.max(40, width - plotLeft - pad.right - 46);
+  const top = pad.top + 4;
+  const usable = height - top - pad.bottom;
+  const rowHeight = usable / Math.max(1, rows.length);
+  const maximum = Math.max(...rows.map(row => Math.abs(row.value)), options.floor ?? 1e-9);
+
+  ctx.font = '9px "DM Mono", monospace';
+  ctx.textBaseline = 'middle';
+  rows.forEach((row, index) => {
+    const centre = top + rowHeight * (index + .5);
+    const barHeight = Math.min(22, rowHeight * .56);
+    const length = Math.abs(row.value) / maximum * plotWidth;
+    ctx.fillStyle = row.colour ?? chart.green;
+    ctx.fillRect(plotLeft, centre - barHeight / 2, Math.max(1, length), barHeight);
+
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = .85;
+    ctx.textAlign = 'right';
+    ctx.fillText(row.label, plotLeft - 10, centre);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+    ctx.fillText(row.readout, plotLeft + length + 8, centre);
+  });
+
+  if (options.reference !== undefined && options.reference > 0) {
+    const position = plotLeft + Math.min(1, options.reference / maximum) * plotWidth;
+    ctx.strokeStyle = ink;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(position, top);
+    ctx.lineTo(position, top + usable);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  return { rows };
+}
+
+function drawUncertainSensitivity(result) {
+  const rows = [...result.sensitivity]
+    .sort((left, right) => right.share - left.share)
+    .map(entry => ({
+      label: entry.label,
+      value: entry.share,
+      readout: `${(entry.share * 100).toFixed(0)}%`,
+      colour: entry.spearman >= 0 ? '#16a05d' : LOSS_COLOUR
+    }));
+  horizontalBars('uncertain-sensitivity-chart', rows, {});
+  const leader = rows[0];
+  $('#uncertain-sensitivity-insight').textContent = leader && leader.value > 0
+    ? `${leader.label.toUpperCase()} DRIVES ${(leader.value * 100).toFixed(0)}%`
+    : 'NOTHING VARIES';
+  chartModels['uncertain-sensitivity-chart'] = {
+    count: rows.length,
+    describe: index => {
+      const entry = [...result.sensitivity].sort((left, right) => right.share - left.share)[index];
+      return `<strong>${entry.label.toUpperCase()}</strong><br>`
+        + `Share of influence: ${(entry.share * 100).toFixed(1)}%<br>`
+        + `Rank correlation: ${entry.spearman >= 0 ? '+' : ''}${entry.spearman.toFixed(3)}<br>`
+        + `${entry.spearman >= 0 ? 'Higher values help' : 'Higher values hurt'}`;
+    }
+  };
+}
+
+function drawUncertainInformation(result) {
+  const parameters = result.valueOfInformation.parameters;
+  const rows = [...parameters]
+    .sort((left, right) => right.value - left.value)
+    .map(entry => ({
+      label: entry.label,
+      value: entry.value,
+      readout: formatFinancial(entry.value)
+    }));
+  horizontalBars('uncertain-information-chart', rows, {
+    reference: result.valueOfInformation.perfect,
+    floor: Math.max(result.valueOfInformation.perfect, 1e-9)
+  });
+  $('#uncertain-information-insight').textContent =
+    `KNOWING EVERYTHING IS WORTH ${formatFinancial(result.valueOfInformation.perfect)}`;
+  chartModels['uncertain-information-chart'] = {
+    count: rows.length,
+    describe: index => {
+      const entry = [...parameters].sort((left, right) => right.value - left.value)[index];
+      return `<strong>${entry.label.toUpperCase()}</strong><br>`
+        + `Worth learning exactly: ${formatFinancial(entry.value)}<br>`
+        + `Knowing every parameter: ${formatFinancial(result.valueOfInformation.perfect)}<br>`
+        + `<small>The most you should pay to find out</small>`;
+    }
+  };
+}
+
+function drawUncertainProgress(result) {
+  const maximumSpend = Math.max(...result.expectedSpend.filter(Number.isFinite), 1e-9);
+  const frame = attemptFrame('uncertain-progress-chart', result, {
+    min: 0, max: 1, format: value => `${(value * 100).toFixed(0)}%`
+  });
+  drawSeries(frame, result.attempts, result.winChance, frame.green, 2.4);
+  // Spend shares the plot on its own scale; the tooltip carries the real figure.
+  drawSeries(frame, result.attempts, result.expectedSpend.map(value => value / maximumSpend),
+    LOSS_COLOUR, 1.8, [5, 4]);
+  drawStopMarker(frame, result.optimal.attempts, frame.ink);
+
+  $('#uncertain-progress-insight').textContent =
+    `${(result.optimal.winChance * 100).toFixed(1)}% FOR ${formatFinancial(result.optimal.expectedSpend)}`;
+  chartModels['uncertain-progress-chart'] = attemptModel(result, result.attempts, index =>
+    `<strong>BY ATTEMPT ${result.attempts[index]}</strong><br>`
+    + `Chance of a win: ${(result.winChance[index] * 100).toFixed(2)}%<br>`
+    + `Expected spend: ${formatFinancial(result.expectedSpend[index])}<br>`
+    + `Expected profit: ${formatFinancial(result.expectedProfit[index])}`);
+}
+
+buildBeliefRows();
