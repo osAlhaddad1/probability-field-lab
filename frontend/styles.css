@@ -359,6 +359,9 @@ footer { border-top: 1px solid var(--ink); min-height: 90px; display: flex; just
 .belief-field.certain input { color: #8b948d; }
 
 .uncertain-results { padding-top: 100px; }
+/* Taller than the other modes' charts: these carry titled axes on both sides. */
+.uncertain-results .sweep-chart { height: 320px; }
+.uncertain-results .sweep-wide .sweep-chart { height: 360px; }
 .uncertain-verdict { display: flex; flex-direction: column; justify-content: center; }
 .uncertain-verdict > span { font: 8px var(--mono); letter-spacing: .08em; }
 .uncertain-verdict > strong { margin: 8px 0 4px; font: 500 clamp(46px, 6vw, 88px)/.86 var(--mono); letter-spacing: -.075em; }

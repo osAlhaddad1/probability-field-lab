@@ -1338,8 +1338,10 @@ function drawSweepDecisionCurve(sweep, point) {
 
 function chartIndexAt(canvas, event, model) {
   const rect = canvas.getBoundingClientRect();
-  const plotLeft = 43;
-  const plotRight = rect.width - 13;
+  // Charts that draw their own axes report the padding they used, so the
+  // hover position keeps matching the plot after a layout change.
+  const plotLeft = model.pad?.left ?? 43;
+  const plotRight = rect.width - (model.pad?.right ?? 13);
   const x = event.clientX - rect.left;
   if (x < plotLeft || x > plotRight) return -1;
   const ratio = Math.min(.999999, Math.max(0, (x - plotLeft) / Math.max(1, plotRight - plotLeft)));
@@ -1828,43 +1830,146 @@ function decisionSentence(result) {
     + `${bestToLearn && bestToLearn.value > 0 ? `Pinning down ${bestToLearn.label.toLowerCase()} is worth up to ${formatFinancial(bestToLearn.value)}.` : ''}`;
 }
 
-/* --------------------------------------------------------------------- charts */
+/* --------------------------------------------------------------------- charts
+ * Every chart here carries labelled axes, a named marker for the recommended
+ * stopping point, and its key numbers written onto the plot. The earlier
+ * versions relied on the footer legend to explain what a line meant and left
+ * the horizontal scale unlabelled, which made a logarithmic axis impossible to
+ * read: without ticks there is no way to tell whether the middle of the plot is
+ * attempt 20 or attempt 200.
+ */
 
-const BAND_STRONG = 'rgba(22,160,93,.34)';
-const BAND_WIDE = 'rgba(22,160,93,.15)';
-const BAND_STRONG_DARK = 'rgba(214,242,92,.32)';
-const BAND_WIDE_DARK = 'rgba(214,242,92,.13)';
+const UNCERTAIN_PAD = { left: 66, right: 18, top: 22, bottom: 48 };
+const BAND_INNER = 'rgba(22,160,93,.30)';
+const BAND_OUTER = 'rgba(22,160,93,.13)';
+const BAND_INNER_DARK = 'rgba(214,242,92,.30)';
+const BAND_OUTER_DARK = 'rgba(214,242,92,.12)';
 const LOSS_COLOUR = '#a74d32';
+const LUCK_COLOUR = '#8d9a90';
 
-/** A frame whose horizontal axis is the attempt number on a logarithmic scale. */
-function attemptFrame(id, result, options) {
+/** Round numbers for an axis, so ticks land on values a reader can hold in mind. */
+function niceTicks(min, max, count = 4) {
+  if (!(max > min)) return [min];
+  const rough = (max - min) / count;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+  const normalised = rough / magnitude;
+  const step = (normalised >= 5 ? 10 : normalised >= 2 ? 5 : normalised >= 1 ? 2 : 1) * magnitude;
+  const ticks = [];
+  for (let value = Math.ceil(min / step) * step; value <= max + step * 1e-9; value += step) {
+    ticks.push(Math.abs(value) < step * 1e-9 ? 0 : value);
+  }
+  return ticks.length >= 2 ? ticks : [min, max];
+}
+
+/** 1, 2, 5, 10, 20, 50 … so a logarithmic axis reads like a ruler. */
+function attemptTicks(maxAttempts) {
+  const ticks = [1];
+  for (let magnitude = 1; magnitude <= maxAttempts; magnitude *= 10) {
+    for (const multiple of [2, 5, 10]) {
+      const value = magnitude * multiple;
+      if (value > 1 && value < maxAttempts) ticks.push(value);
+    }
+  }
+  ticks.push(maxAttempts);
+  return ticks;
+}
+
+function shortNumber(value) {
+  const size = Math.abs(value);
+  if (size < 1e-9) return '0';
+  if (size >= 1_000_000) return `${trimZeros(value / 1_000_000, 1)}M`;
+  if (size >= 1_000) return `${trimZeros(value / 1_000, 1)}k`;
+  if (size >= 10) return value.toFixed(0);
+  if (size >= 1) return trimZeros(value, 1);
+  return trimZeros(value, 2);
+}
+
+/** 2.0 reads as clutter next to 2; drop a decimal that carries nothing. */
+function trimZeros(value, digits) {
+  return Number(value.toFixed(digits)).toString();
+}
+
+/**
+ * A plot area with both axes drawn and titled.
+ *
+ * @param options.xLog     attempts on a logarithmic scale
+ * @param options.xTitle   caption under the horizontal axis
+ * @param options.yTitle   caption above the vertical axis
+ * @param options.yFormat  how to render a vertical tick
+ */
+function plotFrame(id, options) {
   const chart = getChartContext(id, options.dark);
+  const { ctx, width, height, ink, muted } = chart;
+  const pad = UNCERTAIN_PAD;
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+
   let min = options.min;
   let max = options.max;
   if (!(max > min)) max = min + 1;
-  const ticks = (options.ticks ?? [0, .5, 1]).map(ratio => ({ value: min + (max - min) * ratio, ratio }));
-  const last = result.maxAttempts;
-  const { plotWidth, plotHeight } = chartFrame(chart, ticks, options.format ?? (value => value.toFixed(1)),
-    ['1', last.toLocaleString()]);
-  const logMax = Math.log(Math.max(2, last));
-  const x = attempt => chart.pad.left + Math.log(Math.max(1, attempt)) / logMax * plotWidth;
-  const y = value => chart.pad.top + plotHeight * (1 - (value - min) / (max - min));
-  return { ...chart, x, y, min, max, plotWidth, plotHeight };
-}
-
-function drawBand(frame, attempts, lower, upper, colour) {
-  const { ctx, x, y } = frame;
-  ctx.fillStyle = colour;
-  ctx.beginPath();
-  attempts.forEach((attempt, index) => {
-    const point = y(clampToFrame(frame, upper[index]));
-    if (index === 0) ctx.moveTo(x(attempt), point); else ctx.lineTo(x(attempt), point);
-  });
-  for (let index = attempts.length - 1; index >= 0; index--) {
-    ctx.lineTo(x(attempts[index]), y(clampToFrame(frame, lower[index])));
+  const yTicks = options.yTicks ?? niceTicks(min, max, 4);
+  if (yTicks.length) {
+    min = Math.min(min, yTicks[0]);
+    max = Math.max(max, yTicks[yTicks.length - 1]);
   }
-  ctx.closePath();
-  ctx.fill();
+
+  const y = value => pad.top + plotHeight * (1 - (value - min) / (max - min));
+  const xMin = options.xLog ? Math.log(1) : options.xMin;
+  const xMax = options.xLog ? Math.log(Math.max(2, options.xMax)) : options.xMax;
+  const x = value => pad.left
+    + ((options.xLog ? Math.log(Math.max(1, value)) : value) - xMin) / Math.max(1e-12, xMax - xMin) * plotWidth;
+
+  ctx.font = '9px "DM Mono", monospace';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 1;
+
+  // Horizontal gridlines and their values.
+  yTicks.forEach(value => {
+    const position = Math.round(y(value)) + .5;
+    ctx.strokeStyle = muted;
+    ctx.globalAlpha = value === 0 ? .55 : .28;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, position);
+    ctx.lineTo(width - pad.right, position);
+    ctx.stroke();
+    ctx.globalAlpha = .8;
+    ctx.fillStyle = ink;
+    ctx.textAlign = 'right';
+    ctx.fillText((options.yFormat ?? shortNumber)(value), pad.left - 9, position);
+  });
+
+  // Vertical ticks along the bottom.
+  const xTicks = options.xTicks ?? [];
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  xTicks.forEach(value => {
+    const position = Math.round(x(value)) + .5;
+    if (position < pad.left - 1 || position > width - pad.right + 1) return;
+    ctx.strokeStyle = muted;
+    ctx.globalAlpha = .22;
+    ctx.beginPath();
+    ctx.moveTo(position, pad.top);
+    ctx.lineTo(position, pad.top + plotHeight);
+    ctx.stroke();
+    ctx.globalAlpha = .8;
+    ctx.fillStyle = ink;
+    ctx.fillText((options.xFormat ?? shortNumber)(value), position, pad.top + plotHeight + 7);
+  });
+
+  // Axis captions.
+  ctx.globalAlpha = .62;
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'center';
+  if (options.xTitle) ctx.fillText(options.xTitle, pad.left + plotWidth / 2, height - 13);
+  if (options.yTitle) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(options.yTitle, pad.left - 57, pad.top - 8);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textBaseline = 'middle';
+
+  return { ...chart, pad, x, y, min, max, plotWidth, plotHeight };
 }
 
 function clampToFrame(frame, value) {
@@ -1872,48 +1977,85 @@ function clampToFrame(frame, value) {
   return Math.min(frame.max, Math.max(frame.min, value));
 }
 
-function drawSeries(frame, attempts, values, colour, width = 2, dash = []) {
+function drawBand(frame, positions, lower, upper, colour) {
+  const { ctx, x, y } = frame;
+  ctx.fillStyle = colour;
+  ctx.beginPath();
+  positions.forEach((position, index) => {
+    const point = y(clampToFrame(frame, upper[index]));
+    if (index === 0) ctx.moveTo(x(position), point); else ctx.lineTo(x(position), point);
+  });
+  for (let index = positions.length - 1; index >= 0; index--) {
+    ctx.lineTo(x(positions[index]), y(clampToFrame(frame, lower[index])));
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawSeries(frame, positions, values, colour, width = 2, dash = []) {
   const { ctx, x, y } = frame;
   ctx.strokeStyle = colour;
   ctx.lineWidth = width;
   ctx.setLineDash(dash);
   ctx.beginPath();
   let started = false;
-  attempts.forEach((attempt, index) => {
+  positions.forEach((position, index) => {
     const value = values[index];
     if (!Number.isFinite(value)) return;
     const point = y(clampToFrame(frame, value));
-    if (!started) { ctx.moveTo(x(attempt), point); started = true; } else ctx.lineTo(x(attempt), point);
+    if (!started) { ctx.moveTo(x(position), point); started = true; } else ctx.lineTo(x(position), point);
   });
   ctx.stroke();
   ctx.setLineDash([]);
+}
+
+/** A small filled caption, so a line can say what it is without a legend lookup. */
+function chip(frame, text, atX, atY, colour, align = 'left') {
+  const { ctx } = frame;
+  ctx.font = '8px "DM Mono", monospace';
+  ctx.textBaseline = 'middle';
+  const width = ctx.measureText(text).width + 10;
+  let left = align === 'left' ? atX + 4 : atX - width - 4;
+  const limit = frame.width - frame.pad.right - width - 1;
+  left = Math.max(frame.pad.left + 1, Math.min(left, limit));
+  ctx.fillStyle = colour;
+  ctx.globalAlpha = .92;
+  ctx.fillRect(left, atY - 7, width, 14);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fbfbf7';
+  ctx.textAlign = 'left';
+  ctx.fillText(text, left + 5, atY);
+  ctx.font = '9px "DM Mono", monospace';
+}
+
+/** The vertical rule for the recommended stopping point, captioned in place. */
+function drawStopMarker(frame, attempt, colour, label = `STOP ${attempt}`) {
+  const { ctx, x, pad, plotHeight, width } = frame;
+  const position = x(attempt);
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.globalAlpha = .8;
+  ctx.beginPath();
+  ctx.moveTo(position, pad.top);
+  ctx.lineTo(position, pad.top + plotHeight);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  const nearRightEdge = position > width - pad.right - 70;
+  chip(frame, label, position, pad.top + 8, colour, nearRightEdge ? 'right' : 'left');
 }
 
 function drawZeroLine(frame, colour) {
   if (!(frame.min < 0 && frame.max > 0)) return;
   const { ctx, y, pad, width } = frame;
   ctx.strokeStyle = colour;
-  ctx.lineWidth = 1;
-  ctx.globalAlpha = .8;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = .85;
   ctx.beginPath();
   ctx.moveTo(pad.left, y(0));
   ctx.lineTo(width - pad.right, y(0));
   ctx.stroke();
-  ctx.globalAlpha = 1;
-}
-
-/** The vertical rule marking the recommended stopping point. */
-function drawStopMarker(frame, attempt, colour) {
-  const { ctx, x, pad, plotHeight } = frame;
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([4, 4]);
-  ctx.globalAlpha = .75;
-  ctx.beginPath();
-  ctx.moveTo(x(attempt), pad.top);
-  ctx.lineTo(x(attempt), pad.top + plotHeight);
-  ctx.stroke();
-  ctx.setLineDash([]);
   ctx.globalAlpha = 1;
 }
 
@@ -1927,8 +2069,25 @@ function extent(...series) {
   }));
   if (!Number.isFinite(min)) return [0, 1];
   if (min === max) return [min - 1, max + 1];
-  const padding = (max - min) * .08;
+  const padding = (max - min) * .1;
   return [min - padding, max + padding];
+}
+
+function attemptModel(result, attempts, describe) {
+  return {
+    count: attempts.length,
+    xValues: attempts.map(attempt => Math.log(Math.max(1, attempt))),
+    pad: UNCERTAIN_PAD,
+    describe
+  };
+}
+
+function nearestCoarse(result, attempt) {
+  let best = 0;
+  result.coarseAttempts.forEach((value, index) => {
+    if (Math.abs(value - attempt) < Math.abs(result.coarseAttempts[best] - attempt)) best = index;
+  });
+  return best;
 }
 
 function drawUncertain(result) {
@@ -1943,18 +2102,19 @@ function drawUncertain(result) {
   drawUncertainProgress(result);
 }
 
-function attemptModel(result, attempts, describe) {
-  return { count: attempts.length, xValues: attempts.map(attempt => Math.log(Math.max(1, attempt))), describe };
-}
-
+/* 01 — profit against where you stop */
 function drawUncertainProfit(result) {
   const [min, max] = extent(result.expectedProfit, result.profitP05, result.profitP95);
-  const frame = attemptFrame('uncertain-profit-chart', result, { min, max, format: value => formatFinancial(value, 0) });
-  drawBand(frame, result.coarseAttempts, result.profitP05, result.profitP95, BAND_WIDE);
-  drawBand(frame, result.coarseAttempts, result.profitP25, result.profitP75, BAND_STRONG);
-  drawZeroLine(frame, '#7e8a81');
+  const frame = plotFrame('uncertain-profit-chart', {
+    min, max, xLog: true, xMax: result.maxAttempts, xTicks: attemptTicks(result.maxAttempts),
+    xFormat: shortNumber, xTitle: 'ATTEMPTS BEFORE YOU STOP  (LOGARITHMIC)', yTitle: 'PROFIT'
+  });
+  drawBand(frame, result.coarseAttempts, result.profitP05, result.profitP95, BAND_OUTER);
+  drawBand(frame, result.coarseAttempts, result.profitP25, result.profitP75, BAND_INNER);
+  drawZeroLine(frame, '#5d6a61');
   drawSeries(frame, result.attempts, result.expectedProfit, frame.green, 2.4);
   drawStopMarker(frame, result.optimal.attempts, frame.ink);
+  if (frame.min < 0 && frame.max > 0) chip(frame, 'BREAK EVEN', frame.pad.left, frame.y(0), '#5d6a61');
 
   $('#uncertain-profit-insight').textContent =
     `BEST AT ${result.optimal.attempts} · ${formatFinancial(result.optimal.expectedProfit)}`;
@@ -1969,44 +2129,60 @@ function drawUncertainProfit(result) {
   });
 }
 
-function nearestCoarse(result, attempt) {
-  let best = 0;
-  result.coarseAttempts.forEach((value, index) => {
-    if (Math.abs(value - attempt) < Math.abs(result.coarseAttempts[best] - attempt)) best = index;
-  });
-  return best;
-}
-
+/* 02 — is one more try worth it */
 function drawUncertainMarginal(result) {
   const [min, max] = extent(result.marginalValue, [0]);
-  const frame = attemptFrame('uncertain-marginal-chart', result, { min, max, format: value => formatFinancial(value, 2) });
+  const frame = plotFrame('uncertain-marginal-chart', {
+    min, max, xLog: true, xMax: result.maxAttempts, xTicks: attemptTicks(result.maxAttempts),
+    xTitle: 'ATTEMPT NUMBER  (LOGARITHMIC)', yTitle: 'VALUE OF THAT ONE ATTEMPT',
+    yFormat: value => value.toFixed(Math.abs(max - min) < 1 ? 2 : 1)
+  });
   drawZeroLine(frame, '#3d4a42');
   drawSeries(frame, result.attempts, result.marginalValue, '#14251d', 2.2);
-  drawStopMarker(frame, result.optimal.attempts, '#14251d');
 
-  const crossing = result.attempts.find((attempt, index) =>
-    result.marginalValue[index] < 0 && attempt >= result.optimal.attempts);
+  let crossing = null;
+  for (let index = 1; index < result.attempts.length; index++) {
+    if (result.marginalValue[index - 1] >= 0 && result.marginalValue[index] < 0) {
+      crossing = result.attempts[index];
+      break;
+    }
+  }
+  if (crossing) {
+    drawStopMarker(frame, crossing, LOSS_COLOUR, `WORTHLESS FROM ${crossing}`);
+  } else {
+    drawStopMarker(frame, result.optimal.attempts, '#14251d');
+  }
+  if (frame.min < 0 && frame.max > 0) {
+    chip(frame, 'ABOVE THIS LINE = WORTH TRYING', frame.pad.left, frame.y(0), '#3d4a42');
+  }
+
   $('#uncertain-marginal-insight').textContent = crossing
-    ? `TURNS NEGATIVE AROUND ATTEMPT ${crossing}`
-    : 'STILL POSITIVE AT THE HORIZON';
+    ? `STOPS PAYING AT ATTEMPT ${crossing}`
+    : 'STILL WORTH IT AT THE HORIZON';
   chartModels['uncertain-marginal-chart'] = attemptModel(result, result.attempts, index =>
     `<strong>ATTEMPT ${result.attempts[index]}</strong><br>`
     + `Value of playing it: ${formatFinancial(result.marginalValue[index])}<br>`
     + `${result.marginalValue[index] >= 0 ? 'Worth taking' : 'Costs more than it returns'}`);
 }
 
+/* 03 — the learning curve */
 function drawUncertainLearning(result) {
   const breakEven = result.reference.breakEvenProbability;
   const [, rawMax] = extent(result.probabilityP95, [Number.isFinite(breakEven) ? breakEven : 0]);
   const max = Math.min(1, Math.max(rawMax, 1e-4));
-  const frame = attemptFrame('uncertain-learning-chart', result, {
-    min: 0, max, dark: true, format: value => `${(value * 100).toFixed(value < .1 ? 2 : 1)}%`
+  const frame = plotFrame('uncertain-learning-chart', {
+    min: 0, max, dark: true, xLog: true, xMax: result.maxAttempts,
+    xTicks: attemptTicks(result.maxAttempts), xTitle: 'ATTEMPT NUMBER  (LOGARITHMIC)',
+    yTitle: 'CHANCE OF WINNING THAT ATTEMPT',
+    yFormat: value => value === 0 ? '0%'
+      : `${(value * 100).toFixed(value < .01 ? 2 : value < .1 ? 1 : 0)}%`
   });
-  drawBand(frame, result.coarseAttempts, result.probabilityP05, result.probabilityP95, BAND_WIDE_DARK);
-  drawBand(frame, result.coarseAttempts, result.probabilityP25, result.probabilityP75, BAND_STRONG_DARK);
+  drawBand(frame, result.coarseAttempts, result.probabilityP05, result.probabilityP95, BAND_OUTER_DARK);
+  drawBand(frame, result.coarseAttempts, result.probabilityP25, result.probabilityP75, BAND_INNER_DARK);
   drawSeries(frame, result.coarseAttempts, result.probabilityP50, frame.green, 2.4);
   if (Number.isFinite(breakEven) && breakEven <= max) {
     drawSeries(frame, [1, result.maxAttempts], [breakEven, breakEven], '#fbfbf7', 1.4, [5, 4]);
+    chip(frame, 'BREAK EVEN', frame.pad.left, frame.y(breakEven), '#6b7a70');
   }
   drawStopMarker(frame, result.optimal.attempts, '#fbfbf7');
 
@@ -2020,54 +2196,115 @@ function drawUncertainLearning(result) {
     + `Middle 90%: ${(result.probabilityP05[index] * 100).toFixed(3)}% to ${(result.probabilityP95[index] * 100).toFixed(3)}%`);
 }
 
+/* 04 — where you might land */
 function drawUncertainDistribution(result) {
   const histogram = result.profitHistogram;
-  const chart = getChartContext('uncertain-distribution-chart');
-  const { ctx, width, pad } = chart;
   const density = histogram.density;
-  const peak = Math.max(...density, 1e-9);
-  const ticks = [0, .5, 1].map(ratio => ({ value: ratio * peak * 100, ratio }));
-  const { plotWidth, plotHeight } = chartFrame(chart, ticks, value => `${value.toFixed(1)}%`,
-    [formatFinancial(histogram.low, 0), formatFinancial(histogram.high, 0)]);
   const span = histogram.high - histogram.low;
-  const x = value => pad.left + (value - histogram.low) / span * plotWidth;
-  const barWidth = plotWidth / density.length;
+  const binWidth = span / density.length;
+  const valueAt = index => histogram.low + (index + .5) * binWidth;
 
-  density.forEach((mass, index) => {
-    const value = histogram.low + (index + .5) * span / density.length;
-    const height = mass / peak * plotHeight;
-    ctx.fillStyle = value >= 0 ? chart.green : LOSS_COLOUR;
-    ctx.globalAlpha = .85;
-    ctx.fillRect(pad.left + index * barWidth, pad.top + plotHeight - height, Math.max(1, barWidth - .5), height);
+  // The reported range spans the most extreme outcome any drawn universe could
+  // produce, which is far wider than where the outcomes actually fall. Plotted
+  // whole, every bar collapses into a single spike. So the view is cropped to
+  // the bulk of the mass, always keeping zero in frame because the loss/profit
+  // boundary is the thing being read off this chart.
+  let first = 0;
+  let last = density.length - 1;
+  let cumulative = 0;
+  for (let index = 0; index < density.length; index++) {
+    cumulative += density[index];
+    if (cumulative > 0.001) { first = index; break; }
+  }
+  cumulative = 0;
+  for (let index = density.length - 1; index >= 0; index--) {
+    cumulative += density[index];
+    if (cumulative > 0.001) { last = index; break; }
+  }
+  const zeroBin = Math.round((0 - histogram.low) / binWidth);
+  if (zeroBin >= 0 && zeroBin < density.length) {
+    first = Math.min(first, zeroBin);
+    last = Math.max(last, zeroBin);
+  }
+  const margin = Math.max(1, Math.round((last - first) * .04));
+  first = Math.max(0, first - margin);
+  last = Math.min(density.length - 1, last + margin);
+  const cropped = first > 0 || last < density.length - 1;
+  const viewLow = histogram.low + first * binWidth;
+  const viewHigh = histogram.low + (last + 1) * binWidth;
+
+  const peak = Math.max(...density.slice(first, last + 1), 1e-9);
+  const frame = plotFrame('uncertain-distribution-chart', {
+    min: 0, max: peak * 100, xMin: viewLow, xMax: viewHigh,
+    xTicks: niceTicks(viewLow, viewHigh, 4), xFormat: shortNumber,
+    xTitle: `WHAT YOU END UP WITH, AFTER ${histogram.attempts} ATTEMPTS`,
+    yTitle: 'SHARE OF OUTCOMES', yFormat: value => `${trimZeros(value, 1)}%`
   });
+  const { ctx, x, y, pad, plotHeight } = frame;
+  const barWidth = frame.plotWidth / (last - first + 1);
+
+  for (let index = first; index <= last; index++) {
+    const top = y(density[index] * 100);
+    ctx.fillStyle = valueAt(index) >= 0 ? frame.green : LOSS_COLOUR;
+    ctx.globalAlpha = .85;
+    ctx.fillRect(pad.left + (index - first) * barWidth, top, Math.max(1, barWidth - .3),
+      pad.top + plotHeight - top);
+  }
   ctx.globalAlpha = 1;
+  if (cropped) {
+    ctx.font = '8px "DM Mono", monospace';
+    ctx.fillStyle = frame.ink;
+    ctx.globalAlpha = .5;
+    ctx.textAlign = 'right';
+    ctx.fillText('RARE EXTREMES TRIMMED', frame.width - pad.right, pad.top + 8);
+    ctx.globalAlpha = 1;
+    ctx.font = '9px "DM Mono", monospace';
+  }
 
   if (histogram.low < 0 && histogram.high > 0) {
-    ctx.strokeStyle = chart.ink;
+    ctx.strokeStyle = frame.ink;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(x(0), pad.top);
     ctx.lineTo(x(0), pad.top + plotHeight);
     ctx.stroke();
+    chip(frame, '← LOSS | PROFIT →', x(0), pad.top + 8, frame.ink);
+  }
+  const median = result.optimal.profitP50;
+  if (Number.isFinite(median)) {
+    ctx.strokeStyle = '#14251d';
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x(median), pad.top);
+    ctx.lineTo(x(median), pad.top + plotHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    chip(frame, `TYPICAL ${formatFinancial(median, 0)}`, x(median), pad.top + plotHeight - 10, '#14251d',
+      x(median) > frame.width - pad.right - 90 ? 'right' : 'left');
   }
 
   $('#uncertain-distribution-insight').textContent =
     `${(result.optimal.profitChance * 100).toFixed(1)}% END AHEAD AFTER ${histogram.attempts}`;
   chartModels['uncertain-distribution-chart'] = {
-    count: density.length,
+    count: last - first + 1,
+    pad: UNCERTAIN_PAD,
     describe: index => {
-      const from = histogram.low + index * span / density.length;
-      const to = from + span / density.length;
+      const from = histogram.low + (first + index) * binWidth;
+      const to = from + binWidth;
       return `<strong>${formatFinancial(from)} to ${formatFinancial(to)}</strong><br>`
-        + `Share of outcomes: ${(density[index] * 100).toFixed(2)}%<br>`
+        + `Share of outcomes: ${(density[first + index] * 100).toFixed(2)}%<br>`
         + `${from >= 0 ? 'A profit' : 'A loss'}`;
     }
   };
 }
 
+/* 05 — chance of ending ahead */
 function drawUncertainChance(result) {
-  const frame = attemptFrame('uncertain-chance-chart', result, {
-    min: 0, max: 1, format: value => `${(value * 100).toFixed(0)}%`
+  const frame = plotFrame('uncertain-chance-chart', {
+    min: 0, max: 1, xLog: true, xMax: result.maxAttempts, xTicks: attemptTicks(result.maxAttempts),
+    xTitle: 'ATTEMPTS BEFORE YOU STOP  (LOGARITHMIC)', yTitle: 'CHANCE YOU FINISH IN PROFIT',
+    yTicks: [0, .25, .5, .75, 1], yFormat: value => `${(value * 100).toFixed(0)}%`
   });
   drawSeries(frame, result.coarseAttempts, result.profitChance, frame.green, 2.4);
   drawStopMarker(frame, result.optimal.attempts, frame.ink);
@@ -2077,6 +2314,9 @@ function drawUncertainChance(result) {
     if (value > result.profitChance[best]) best = index;
   });
   const bestAttempt = result.coarseAttempts[best];
+  if (bestAttempt !== result.optimal.attempts) {
+    drawStopMarker(frame, bestAttempt, '#3f7d5c', `SAFEST ${bestAttempt}`);
+  }
   $('#uncertain-chance-insight').textContent =
     `PEAKS AT ${(result.profitChance[best] * 100).toFixed(1)}% NEAR ATTEMPT ${bestAttempt}`;
   chartModels['uncertain-chance-chart'] = attemptModel(result, result.coarseAttempts, index =>
@@ -2085,18 +2325,17 @@ function drawUncertainChance(result) {
     + `Median outcome: ${formatFinancial(result.profitP50[index])}`);
 }
 
+/* 06 — where the uncertainty comes from */
 function drawUncertainVariance(result) {
-  const chart = getChartContext('uncertain-variance-chart');
-  const { ctx, pad } = chart;
-  const ticks = [0, .5, 1].map(ratio => ({ value: ratio * 100, ratio }));
-  const last = result.maxAttempts;
-  const { plotWidth, plotHeight } = chartFrame(chart, ticks, value => `${value.toFixed(0)}%`,
-    ['1', last.toLocaleString()]);
-  const logMax = Math.log(Math.max(2, last));
-  const x = attempt => pad.left + Math.log(Math.max(1, attempt)) / logMax * plotWidth;
+  const frame = plotFrame('uncertain-variance-chart', {
+    min: 0, max: 1, xLog: true, xMax: result.maxAttempts, xTicks: attemptTicks(result.maxAttempts),
+    xTitle: 'ATTEMPTS BEFORE YOU STOP  (LOGARITHMIC)', yTitle: 'SHARE OF THE TOTAL RISK',
+    yTicks: [0, .25, .5, .75, 1], yFormat: value => `${(value * 100).toFixed(0)}%`
+  });
+  const { ctx, x, y, pad, plotHeight } = frame;
 
-  // Shares rather than absolute variance: the question this chart answers is
-  // where the risk comes from, not how much of it there is.
+  // Shares rather than absolute variance: this chart answers where the risk
+  // comes from, not how much of it there is.
   const shares = result.attempts.map((attempt, index) => {
     const luck = Math.max(0, result.varianceLuck[index]);
     const parameter = Math.max(0, result.varianceParameter[index]);
@@ -2106,23 +2345,42 @@ function drawUncertainVariance(result) {
   });
 
   const layers = [
-    { colour: '#7e8a81', pick: share => share[0] },
-    { colour: chart.green, pick: share => share[0] + share[1] },
-    { colour: LOSS_COLOUR, pick: () => 1 }
+    { colour: LOSS_COLOUR, upTo: () => 1, label: 'YOUR ERROR BARS' },
+    { colour: frame.green, upTo: share => share[0] + share[1], label: 'THE NUMBERS' },
+    { colour: LUCK_COLOUR, upTo: share => share[0], label: 'LUCK' }
   ];
-  // Painted from the top down so each layer covers the one behind it.
-  for (let layer = layers.length - 1; layer >= 0; layer--) {
-    ctx.fillStyle = layers[layer].colour;
+  layers.forEach(layer => {
+    ctx.fillStyle = layer.colour;
     ctx.beginPath();
     ctx.moveTo(x(result.attempts[0]), pad.top + plotHeight);
-    result.attempts.forEach((attempt, index) => {
-      ctx.lineTo(x(attempt), pad.top + plotHeight * (1 - layers[layer].pick(shares[index])));
-    });
+    result.attempts.forEach((attempt, index) => ctx.lineTo(x(attempt), y(layer.upTo(shares[index]))));
     ctx.lineTo(x(result.attempts[result.attempts.length - 1]), pad.top + plotHeight);
     ctx.closePath();
     ctx.fill();
-  }
+  });
 
+  // Name each band inside itself. The label is placed at the middle of the
+  // drawn plot rather than the middle of the data, because a logarithmic axis
+  // puts the midpoint of the array far to the right of the midpoint of the pixels.
+  const targetX = pad.left + frame.plotWidth * .46;
+  let middle = 0;
+  result.attempts.forEach((attempt, index) => {
+    if (Math.abs(x(attempt) - targetX) < Math.abs(x(result.attempts[middle]) - targetX)) middle = index;
+  });
+  const share = shares[middle];
+  const centres = [share[0] / 2, share[0] + share[1] / 2, share[0] + share[1] + share[2] / 2];
+  const names = ['LUCK OF THE GAME', 'NOT KNOWING THE NUMBERS', 'NOT KNOWING YOUR ERROR BARS'];
+  const thickness = [share[0], share[1], share[2]];
+  ctx.font = '8px "DM Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fbfbf7';
+  names.forEach((name, index) => {
+    if (thickness[index] < .13) return;
+    ctx.fillText(name, targetX, y(centres[index]));
+  });
+  ctx.font = '9px "DM Mono", monospace';
+
+  drawStopMarker(frame, result.optimal.attempts, '#14251d');
   const optimal = result.optimal;
   const total = optimal.varianceTotal || 1;
   $('#uncertain-variance-insight').textContent =
@@ -2136,111 +2394,140 @@ function drawUncertainVariance(result) {
     + `Total spread: ${formatFinancial(Math.sqrt(Math.max(0, result.varianceLuck[index] + result.varianceParameter[index] + result.varianceHyper[index])))}`);
 }
 
-/** Horizontal bars, one per parameter, sorted by influence. */
+/** Horizontal bars with a labelled value axis. */
 function horizontalBars(id, rows, options) {
   const chart = getChartContext(id, options.dark);
-  const { ctx, width, height, pad, ink } = chart;
-  const plotLeft = 150;
-  const plotWidth = Math.max(40, width - plotLeft - pad.right - 46);
-  const top = pad.top + 4;
-  const usable = height - top - pad.bottom;
-  const rowHeight = usable / Math.max(1, rows.length);
+  const { ctx, width, height, ink, muted } = chart;
+  const gutter = 152;
+  const pad = { left: gutter, right: 58, top: 16, bottom: 42 };
+  const plotWidth = Math.max(40, width - pad.left - pad.right);
+  const plotHeight = height - pad.top - pad.bottom;
   const maximum = Math.max(...rows.map(row => Math.abs(row.value)), options.floor ?? 1e-9);
+  const ticks = niceTicks(0, maximum, 3);
+  const x = value => pad.left + Math.min(1, value / maximum) * plotWidth;
 
   ctx.font = '9px "DM Mono", monospace';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'center';
+  ticks.forEach(value => {
+    const position = Math.round(x(value)) + .5;
+    ctx.strokeStyle = muted;
+    ctx.globalAlpha = .25;
+    ctx.beginPath();
+    ctx.moveTo(position, pad.top);
+    ctx.lineTo(position, pad.top + plotHeight);
+    ctx.stroke();
+    ctx.globalAlpha = .8;
+    ctx.fillStyle = ink;
+    ctx.fillText((options.format ?? shortNumber)(value), position, pad.top + plotHeight + 7);
+  });
+  ctx.globalAlpha = .62;
+  ctx.fillStyle = ink;
+  // Centred on the whole canvas, not the plot: the label gutter pushes the plot
+  // far to the right and a long caption would run off the edge.
+  if (options.xTitle) ctx.fillText(options.xTitle, width / 2, height - 13);
+  ctx.globalAlpha = 1;
+
   ctx.textBaseline = 'middle';
+  const rowHeight = plotHeight / Math.max(1, rows.length);
   rows.forEach((row, index) => {
-    const centre = top + rowHeight * (index + .5);
-    const barHeight = Math.min(22, rowHeight * .56);
+    const centre = pad.top + rowHeight * (index + .5);
+    const barHeight = Math.min(20, rowHeight * .58);
     const length = Math.abs(row.value) / maximum * plotWidth;
     ctx.fillStyle = row.colour ?? chart.green;
-    ctx.fillRect(plotLeft, centre - barHeight / 2, Math.max(1, length), barHeight);
-
+    ctx.fillRect(pad.left, centre - barHeight / 2, Math.max(1, length), barHeight);
     ctx.fillStyle = ink;
     ctx.globalAlpha = .85;
     ctx.textAlign = 'right';
-    ctx.fillText(row.label, plotLeft - 10, centre);
+    ctx.fillText(row.label, pad.left - 10, centre);
     ctx.globalAlpha = 1;
     ctx.textAlign = 'left';
-    ctx.fillText(row.readout, plotLeft + length + 8, centre);
+    ctx.fillText(row.readout, pad.left + length + 8, centre);
   });
 
-  if (options.reference !== undefined && options.reference > 0) {
-    const position = plotLeft + Math.min(1, options.reference / maximum) * plotWidth;
+  if (options.reference > 0) {
+    const position = x(options.reference);
     ctx.strokeStyle = ink;
     ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
-    ctx.moveTo(position, top);
-    ctx.lineTo(position, top + usable);
+    ctx.moveTo(position, pad.top);
+    ctx.lineTo(position, pad.top + plotHeight);
     ctx.stroke();
     ctx.setLineDash([]);
   }
-  return { rows };
 }
 
+/* 07 — which unknown moves the needle */
 function drawUncertainSensitivity(result) {
-  const rows = [...result.sensitivity]
-    .sort((left, right) => right.share - left.share)
-    .map(entry => ({
-      label: entry.label,
-      value: entry.share,
-      readout: `${(entry.share * 100).toFixed(0)}%`,
-      colour: entry.spearman >= 0 ? '#16a05d' : LOSS_COLOUR
-    }));
-  horizontalBars('uncertain-sensitivity-chart', rows, {});
-  const leader = rows[0];
-  $('#uncertain-sensitivity-insight').textContent = leader && leader.value > 0
-    ? `${leader.label.toUpperCase()} DRIVES ${(leader.value * 100).toFixed(0)}%`
+  const ordered = [...result.sensitivity].sort((left, right) => right.share - left.share);
+  horizontalBars('uncertain-sensitivity-chart', ordered.map(entry => ({
+    label: entry.label,
+    value: entry.share,
+    readout: `${(entry.share * 100).toFixed(0)}%`,
+    colour: entry.spearman >= 0 ? '#16a05d' : LOSS_COLOUR
+  })), { xTitle: 'SHARE OF THE INFLUENCE', format: value => `${(value * 100).toFixed(0)}%` });
+
+  const leader = ordered[0];
+  $('#uncertain-sensitivity-insight').textContent = leader && leader.share > 0
+    ? `${leader.label.toUpperCase()} DRIVES ${(leader.share * 100).toFixed(0)}%`
     : 'NOTHING VARIES';
   chartModels['uncertain-sensitivity-chart'] = {
-    count: rows.length,
-    describe: index => {
-      const entry = [...result.sensitivity].sort((left, right) => right.share - left.share)[index];
-      return `<strong>${entry.label.toUpperCase()}</strong><br>`
-        + `Share of influence: ${(entry.share * 100).toFixed(1)}%<br>`
-        + `Rank correlation: ${entry.spearman >= 0 ? '+' : ''}${entry.spearman.toFixed(3)}<br>`
-        + `${entry.spearman >= 0 ? 'Higher values help' : 'Higher values hurt'}`;
-    }
+    count: ordered.length,
+    describe: index => `<strong>${ordered[index].label.toUpperCase()}</strong><br>`
+      + `Share of influence: ${(ordered[index].share * 100).toFixed(1)}%<br>`
+      + `Rank correlation: ${ordered[index].spearman >= 0 ? '+' : ''}${ordered[index].spearman.toFixed(3)}<br>`
+      + `${ordered[index].spearman >= 0 ? 'Higher values help you' : 'Higher values hurt you'}`
   };
 }
 
+/* 08 — what an answer would be worth */
 function drawUncertainInformation(result) {
   const parameters = result.valueOfInformation.parameters;
-  const rows = [...parameters]
-    .sort((left, right) => right.value - left.value)
-    .map(entry => ({
-      label: entry.label,
-      value: entry.value,
-      readout: formatFinancial(entry.value)
-    }));
-  horizontalBars('uncertain-information-chart', rows, {
-    reference: result.valueOfInformation.perfect,
-    floor: Math.max(result.valueOfInformation.perfect, 1e-9)
+  const ordered = [...parameters].sort((left, right) => right.value - left.value);
+  const perfect = result.valueOfInformation.perfect;
+  horizontalBars('uncertain-information-chart', ordered.map(entry => ({
+    label: entry.label,
+    value: entry.value,
+    readout: formatFinancial(entry.value)
+  })), {
+    reference: perfect,
+    floor: Math.max(perfect, 1e-9),
+    xTitle: 'WORTH PAYING TO FIND OUT  (DASH = KNOWING EVERYTHING)'
   });
+
   $('#uncertain-information-insight').textContent =
-    `KNOWING EVERYTHING IS WORTH ${formatFinancial(result.valueOfInformation.perfect)}`;
+    `KNOWING EVERYTHING IS WORTH ${formatFinancial(perfect)}`;
   chartModels['uncertain-information-chart'] = {
-    count: rows.length,
-    describe: index => {
-      const entry = [...parameters].sort((left, right) => right.value - left.value)[index];
-      return `<strong>${entry.label.toUpperCase()}</strong><br>`
-        + `Worth learning exactly: ${formatFinancial(entry.value)}<br>`
-        + `Knowing every parameter: ${formatFinancial(result.valueOfInformation.perfect)}<br>`
-        + `<small>The most you should pay to find out</small>`;
-    }
+    count: ordered.length,
+    describe: index => `<strong>${ordered[index].label.toUpperCase()}</strong><br>`
+      + `Worth learning exactly: ${formatFinancial(ordered[index].value)}<br>`
+      + `Knowing every parameter: ${formatFinancial(perfect)}<br>`
+      + `<small>The most you should pay to find out</small>`
   };
 }
 
+/* 09 — chance of a win against money spent */
 function drawUncertainProgress(result) {
   const maximumSpend = Math.max(...result.expectedSpend.filter(Number.isFinite), 1e-9);
-  const frame = attemptFrame('uncertain-progress-chart', result, {
-    min: 0, max: 1, format: value => `${(value * 100).toFixed(0)}%`
+  const frame = plotFrame('uncertain-progress-chart', {
+    min: 0, max: 1, xLog: true, xMax: result.maxAttempts, xTicks: attemptTicks(result.maxAttempts),
+    xTitle: 'ATTEMPTS  (LOGARITHMIC)', yTitle: 'CHANCE OF HAVING WON AT LEAST ONCE',
+    yTicks: [0, .25, .5, .75, 1], yFormat: value => `${(value * 100).toFixed(0)}%`
   });
   drawSeries(frame, result.attempts, result.winChance, frame.green, 2.4);
-  // Spend shares the plot on its own scale; the tooltip carries the real figure.
   drawSeries(frame, result.attempts, result.expectedSpend.map(value => value / maximumSpend),
     LOSS_COLOUR, 1.8, [5, 4]);
   drawStopMarker(frame, result.optimal.attempts, frame.ink);
+
+  // The spend line shares the plot on its own scale, so its top is labelled.
+  const { ctx, width, pad } = frame;
+  ctx.font = '8px "DM Mono", monospace';
+  ctx.fillStyle = LOSS_COLOUR;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`SPEND, TOP = ${formatFinancial(maximumSpend, 0)}`, width - pad.right, pad.top + 8);
+  ctx.font = '9px "DM Mono", monospace';
 
   $('#uncertain-progress-insight').textContent =
     `${(result.optimal.winChance * 100).toFixed(1)}% FOR ${formatFinancial(result.optimal.expectedSpend)}`;
