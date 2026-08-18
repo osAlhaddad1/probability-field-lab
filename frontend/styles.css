@@ -358,6 +358,12 @@ footer { border-top: 1px solid var(--ink); min-height: 90px; display: flex; just
 .belief-field i { font-style: normal; color: #667169; font: 9px var(--mono); }
 .belief-field.certain input { color: #8b948d; }
 
+.effort-row { align-items: center !important; }
+.effort-choice { display: flex; border: 1px solid var(--ink); }
+.effort-option { min-height: 30px; padding: 0 9px; border: 0; background: transparent; font: 8px var(--mono); letter-spacing: .06em; cursor: pointer; }
+.effort-option + .effort-option { border-left: 1px solid var(--line); }
+.effort-option.active { background: var(--ink); color: var(--acid); }
+
 .uncertain-results { padding-top: 100px; }
 /* Taller than the other modes' charts: these carry titled axes on both sides. */
 .uncertain-results .sweep-chart { height: 320px; }

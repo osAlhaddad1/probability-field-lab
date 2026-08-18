@@ -1745,11 +1745,26 @@ function updateUncertainWorkload() {
 
 $('#uncertain-attempts').addEventListener('input', updateWorkload);
 
+// Sampling effort is a choice about patience, not about the game. AUTO lets the
+// engine size its own run; the other settings pin the number of worlds so a run
+// is either quick or as precise as you are willing to wait for.
+let samplingEffort = 'auto';
+document.querySelectorAll('[data-effort]').forEach(button => button.addEventListener('click', () => {
+  samplingEffort = button.dataset.effort;
+  document.querySelectorAll('[data-effort]').forEach(other => {
+    const active = other === button;
+    other.classList.toggle('active', active);
+    other.setAttribute('aria-pressed', String(active));
+  });
+}));
+
 // How many worlds to explore is a question about the sampler, not about the game,
 // so it is not asked. The engine sizes its own run from a pilot and reports the
 // precision it actually reached.
 function uncertainRequest(workload) {
-  return { ...workload.beliefs, maxAttempts: workload.attempts, learningLaw };
+  const request = { ...workload.beliefs, maxAttempts: workload.attempts, learningLaw };
+  if (samplingEffort !== 'auto') request.worlds = Number(samplingEffort);
+  return request;
 }
 
 /* --------------------------------------------------------------- presentation */
@@ -1773,7 +1788,7 @@ function showUncertain(result) {
   $('#uncertain-precision').textContent = Number.isFinite(precision.standardError)
     ? `± ${formatFinancial(precision.standardError)}`
     : '—';
-  $('#uncertain-total').textContent = `${Number(precision.worlds).toLocaleString()} WORLDS`;
+  $('#uncertain-total').textContent = Number(precision.worlds).toLocaleString();
 
   $('#uncertain-stop').textContent = Number(optimal.attempts).toLocaleString();
   $('#uncertain-stop-note').textContent = optimal.attempts >= result.maxAttempts

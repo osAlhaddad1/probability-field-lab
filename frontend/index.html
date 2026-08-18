@@ -70,7 +70,16 @@
 
       <div id="uncertain-spec" class="run-spec hidden">
         <label><span>MOST TRIES YOU WOULD CONSIDER</span><input id="uncertain-attempts" type="number" min="1" step="1" value="400"></label>
-        <div><span>SAMPLING EFFORT</span><strong id="uncertain-total">AUTOMATIC</strong></div>
+        <div class="effort-row">
+          <span>SAMPLING EFFORT</span>
+          <span class="effort-choice" role="group" aria-label="Sampling effort">
+            <button class="effort-option active" data-effort="auto" aria-pressed="true">AUTO</button>
+            <button class="effort-option" data-effort="96" aria-pressed="false">FAST</button>
+            <button class="effort-option" data-effort="700" aria-pressed="false">HIGH</button>
+            <button class="effort-option" data-effort="4000" aria-pressed="false">MAX</button>
+          </span>
+        </div>
+        <div><span>WORLDS EXPLORED</span><strong id="uncertain-total">&mdash;</strong></div>
         <p id="uncertain-warning" class="workload-warning">THE ENGINE MEASURES ITS OWN ERROR AND KEEPS WORKING UNTIL THE ANSWER IS STEADY</p>
       </div>
 
