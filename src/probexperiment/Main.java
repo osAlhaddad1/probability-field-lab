@@ -75,7 +75,7 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(System.getProperty("experiment.root", "."));
-        String host = setting("experiment.host", "HOST", "127.0.0.1");
+        String host = setting("experiment.host", "HOST", "0.0.0.0");
         int port = Integer.parseInt(setting("experiment.port", "PORT", "8080"));
         Main app = new Main(root);
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
