@@ -37,7 +37,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         Path projectRoot = Path.of(System.getProperty("experiment.root", ".")).toAbsolutePath().normalize();
         Path dataRoot = resolveDataRoot(projectRoot);
-        String host = setting("experiment.host", "HOST", "127.0.0.1");
+        String host = setting("experiment.host", "HOST", "0.0.0.0");
         int port = Integer.parseInt(setting("experiment.port", "PORT", "8080"));
 
         Router router = new Router();
