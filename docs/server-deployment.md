@@ -44,18 +44,32 @@ SSH_AUTH_SOCK=/tmp/itender-agent.sock ssh itender-ubuntu '
 '
 ```
 
-Add the site to `/srv/proxy/Caddyfile` (via the proxy repo, not by hand on the
-box) and reload Caddy:
+Add the site to `/srv/proxy/Caddyfile`. That directory is not a git checkout —
+it holds the Caddyfile, `docker-compose.yml` and `.env` and is edited on the box
+— so this is the one place the no-manual-edits rule does not apply. Match the
+house style of the `monitor.` and `metrics.` blocks:
 
 ```
+# Probability Field Lab.
 lab.92.222.82.179.sslip.io {
-    encode zstd gzip
-    reverse_proxy 127.0.0.1:8774
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:8774
 }
 ```
 
+Validate before reloading — a bad Caddyfile would affect every app on the box,
+though Caddy keeps the running config if the new one does not parse:
+
 ```bash
-SSH_AUTH_SOCK=/tmp/itender-agent.sock ssh itender 'docker compose -f /srv/proxy/compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile'
+SSH_AUTH_SOCK=/tmp/itender-agent.sock ssh itender 'docker compose -f /srv/proxy/docker-compose.yml exec caddy caddy validate --config /etc/caddy/Caddyfile'
+SSH_AUTH_SOCK=/tmp/itender-agent.sock ssh itender 'docker compose -f /srv/proxy/docker-compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile'
 ```
 
 `sslip.io` resolves the hostname to the IP with no DNS work, so Let's Encrypt
