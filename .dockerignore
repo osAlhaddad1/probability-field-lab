@@ -1,0 +1,11 @@
+.git
+.github
+build
+out
+data
+docs
+infra
+node_modules
+run.bat
+run.ps1
+README.md

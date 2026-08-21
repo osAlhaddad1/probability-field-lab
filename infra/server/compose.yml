@@ -1,0 +1,24 @@
+# Deployed to /srv/apps/probability-field-lab/compose.yml by the deploy workflow.
+# IMAGE is pinned to a commit SHA in .env; never use a floating tag here.
+services:
+  app:
+    image: ${IMAGE:?IMAGE is required}
+    container_name: probability-field-lab
+    restart: unless-stopped
+    # Bound to loopback only: Caddy owns 80/443 and Docker bypasses UFW for
+    # published ports.
+    ports:
+      - "127.0.0.1:8774:8080"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      EXPERIMENT_DATA_ROOT: "/data"
+    # Bind mount, not a named volume, and chowned to uid 10001 on the host.
+    volumes:
+      - ./data:/data
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

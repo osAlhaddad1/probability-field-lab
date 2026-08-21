@@ -91,6 +91,8 @@ java -jar build\probability-field-lab.jar
 
 The server reads `PORT`, `HOST`, and `EXPERIMENT_DATA_ROOT` environment variables in hosted environments. Local development continues to work with `npm run dev`.
 
-## GitHub and Azure
+## Deployment
 
-The repository includes a GitHub Actions workflow and Bicep infrastructure for passwordless deployment to Azure App Service. See [docs/azure-deployment.md](docs/azure-deployment.md) for the one-time Azure student-account setup and deployment commands.
+Pushing to `main` builds the JAR, smoke-tests it, publishes a Docker image to GHCR, then deploys it to the OVH VPS over SSH behind Caddy on `127.0.0.1:8774`, rolling back if the container healthcheck does not go green. See [docs/server-deployment.md](docs/server-deployment.md) for the one-time server setup and the secrets the workflow expects.
+
+The Bicep template in `infra/main.bicep` and [docs/azure-deployment.md](docs/azure-deployment.md) remain for the Azure App Service route.
